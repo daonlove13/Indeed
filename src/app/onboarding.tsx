@@ -1,9 +1,8 @@
 import { useState } from 'react';
-import { View, Text, StyleSheet, TouchableOpacity, Dimensions } from 'react-native';
+import { View, Text, StyleSheet, TouchableOpacity } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
 import { Feather } from '@expo/vector-icons';
-
-const { width } = Dimensions.get('window');
 
 const SLIDES = [
   {
@@ -27,6 +26,7 @@ export default function OnboardingScreen() {
   const [slide, setSlide] = useState(0);
   const isLast = slide === SLIDES.length - 1;
   const current = SLIDES[slide];
+  const insets = useSafeAreaInsets();
 
   const next = () => {
     if (isLast) router.replace('/login');
@@ -35,7 +35,7 @@ export default function OnboardingScreen() {
 
   return (
     <View style={styles.container}>
-      <TouchableOpacity style={styles.skipBtn} onPress={() => router.replace('/login')}>
+      <TouchableOpacity style={[styles.skipBtn, { paddingTop: insets.top + 16 }]} onPress={() => router.replace('/login')}>
         <Text style={styles.skipText}>건너뛰기</Text>
       </TouchableOpacity>
 
@@ -45,7 +45,7 @@ export default function OnboardingScreen() {
         <Text style={styles.desc}>{current.desc}</Text>
       </View>
 
-      <View style={styles.footer}>
+      <View style={[styles.footer, { paddingBottom: Math.max(insets.bottom, 32) }]}>
         <View style={styles.dots}>
           {SLIDES.map((_, i) => (
             <View
@@ -77,7 +77,6 @@ const styles = StyleSheet.create({
   skipBtn: {
     alignSelf: 'flex-end',
     padding: 16,
-    paddingTop: 56,
   },
   skipText: {
     fontSize: 13,
@@ -109,7 +108,6 @@ const styles = StyleSheet.create({
   },
   footer: {
     paddingHorizontal: 24,
-    paddingBottom: 48,
     alignItems: 'center',
     gap: 24,
   },
@@ -131,7 +129,7 @@ const styles = StyleSheet.create({
     backgroundColor: '#e5e7eb',
   },
   button: {
-    width: width - 48,
+    alignSelf: 'stretch',
     height: 56,
     backgroundColor: '#000',
     borderRadius: 15,

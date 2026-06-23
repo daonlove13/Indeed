@@ -1,9 +1,11 @@
-import { useEffect } from 'react';
+import { useEffect, useRef } from 'react';
 import { router } from 'expo-router';
 import { supabase } from '../lib/supabase';
 import StudentIdPage from './student-id';
 
 export default function PendingScreen() {
+  const instanceId = useRef(Math.random().toString(36).slice(2)).current;
+
   useEffect(() => {
     let mounted = true;
     let cleanup: (() => void) | undefined;
@@ -29,7 +31,7 @@ export default function PendingScreen() {
       }
 
       const channel = supabase
-        .channel('pending_user_watch')
+        .channel(`pending_user_watch_${instanceId}`)
         .on('postgres_changes',
           { event: 'UPDATE', schema: 'public', table: 'users', filter: `id=eq.${user.id}` },
           (payload) => {

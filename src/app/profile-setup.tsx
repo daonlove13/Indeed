@@ -3,6 +3,7 @@ import {
   View, Text, StyleSheet, TouchableOpacity, TextInput, ScrollView,
   ActivityIndicator, KeyboardAvoidingView, Platform, Modal, FlatList,
 } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
 import { Feather } from '@expo/vector-icons';
 import { createUserProfile } from '../services/api';
@@ -29,6 +30,7 @@ const formatPhone = (val: string) => {
 };
 
 export default function ProfileSetupPage() {
+  const insets = useSafeAreaInsets();
   const [name, setName] = useState('');
   const [department, setDepartment] = useState('');
   const [studentId, setStudentId] = useState('');
@@ -67,7 +69,7 @@ export default function ProfileSetupPage() {
 
   return (
     <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
-      <View style={styles.header}>
+      <View style={[styles.header, { marginTop: insets.top }]}>
         <TouchableOpacity onPress={() => router.back()} style={styles.backBtn}>
           <Feather name="chevron-left" size={20} color="#6a7282" />
           <Text style={styles.backText}>뒤로</Text>
@@ -172,7 +174,7 @@ export default function ProfileSetupPage() {
 
       <Modal visible={showDeptPicker} animationType="slide" transparent>
         <View style={styles.modalOverlay}>
-          <View style={styles.modalContent}>
+          <View style={[styles.modalContent, { paddingBottom: Math.max(insets.bottom, 24) }]}>
             <View style={styles.modalHandle} />
             <Text style={styles.modalTitle}>학과 선택</Text>
             <FlatList
@@ -203,7 +205,6 @@ const styles = StyleSheet.create({
     paddingHorizontal: 16,
     flexDirection: 'row',
     alignItems: 'center',
-    marginTop: 44,
   },
   backBtn: {
     flexDirection: 'row',
@@ -353,7 +354,6 @@ const styles = StyleSheet.create({
     backgroundColor: '#fff',
     borderTopLeftRadius: 24,
     borderTopRightRadius: 24,
-    paddingBottom: 40,
     maxHeight: '80%',
   },
   modalHandle: {

@@ -16,7 +16,10 @@
         "backgroundColor": "#000000",
         "foregroundImage": "./assets/images/icon.png"
       },
-      "package": "com.indeed.app"
+      "package": "com.indeed.app",
+      "permissions": [
+        "android.permission.RECORD_AUDIO"
+      ]
     },
     "web": {
       "output": "static",
@@ -24,17 +27,27 @@
     },
     "plugins": [
       "expo-router",
+      "expo-dev-client",
       "expo-image-picker",
       [
         "expo-splash-screen",
         {
-          "backgroundColor": "#000000"
+          "backgroundColor": "#000000",
+          "image": "./assets/images/splash-icon.png",
+          "imageWidth": 200
         }
       ],
       "expo-asset"
     ],
     "experiments": {
       "typedRoutes": true
-    }
+    },
+    "extra": {
+      "router": {},
+      "eas": {
+        "projectId": "4ca294a5-b95c-4c89-86de-5473ea252567"
+      }
+    },
+    "owner": "judason"
   }
 }

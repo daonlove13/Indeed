@@ -1,14 +1,16 @@
 import { View, Text, StyleSheet, TouchableOpacity, FlatList, ActivityIndicator } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
 import { Feather } from '@expo/vector-icons';
 import { useHistory } from '../hooks/useData';
 
 export default function HistoryPage() {
   const { history, loading } = useHistory();
+  const insets = useSafeAreaInsets();
 
   return (
     <View style={styles.container}>
-      <View style={styles.header}>
+      <View style={[styles.header, { marginTop: insets.top }]}>
         <TouchableOpacity onPress={() => router.back()} style={styles.backBtn}>
           <Feather name="chevron-left" size={20} color="#6a7282" />
           <Text style={styles.backText}>뒤로</Text>
@@ -53,7 +55,6 @@ const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: '#fff' },
   header: {
     height: 56,
-    marginTop: 44,
     paddingHorizontal: 16,
     flexDirection: 'row',
     alignItems: 'center',

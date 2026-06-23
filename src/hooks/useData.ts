@@ -47,39 +47,46 @@ export function useTeam(onMatchDetected?: (teamId: string) => void) {
   const { data, loading, error, reload, setData } = useFetch<Team | null>(api.getTeam, [], 'team');
   const onMatchDetectedRef = useRef(onMatchDetected);
   onMatchDetectedRef.current = onMatchDetected;
+  const reloadRef = useRef(reload);
+  useEffect(() => { reloadRef.current = reload; }, [reload]);
+  const setDataRef = useRef(setData);
+  useEffect(() => { setDataRef.current = setData; }, [setData]);
+
+  // 훅 인스턴스마다 고유 ID — 동일 채널명 충돌 방지
+  const instanceId = useRef(Math.random().toString(36).slice(2)).current;
 
   useEffect(() => {
-    const ch = supabase.channel('team_members_changes')
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'team_members' }, () => reload())
+    const ch = supabase.channel(`team_members_changes_${instanceId}`)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'team_members' }, () => reloadRef.current())
       .subscribe();
     return () => { supabase.removeChannel(ch); };
-  }, [reload]);
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
-    const ch = supabase.channel('matches_insert')
+    const ch = supabase.channel(`matches_insert_${instanceId}`)
       .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'matches' },
         async (payload) => {
           const match = payload.new as { team_a: string; team_b: string };
           const freshTeam = await api.getTeam();
           if (!freshTeam) return;
-          reload();
+          reloadRef.current();
           if (match.team_a === freshTeam.id || match.team_b === freshTeam.id) {
             onMatchDetectedRef.current?.(freshTeam.id);
           }
         })
       .subscribe();
     return () => { supabase.removeChannel(ch); };
-  }, [reload]);
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
-    const ch = supabase.channel('teams_status_changes')
+    const ch = supabase.channel(`teams_status_changes_${instanceId}`)
       .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'teams' },
         async (payload) => {
           const updated = payload.new as { id: string; status: string };
           const freshTeam = await api.getTeam();
           if (!freshTeam || freshTeam.id !== updated.id) return;
           const newStatus = updated.status as 'waiting' | 'applied' | 'matched';
-          setData(prev => {
+          setDataRef.current(prev => {
             if (!prev || prev.id !== updated.id) return prev;
             return { ...prev, status: newStatus, applied: newStatus === 'applied' };
           });
@@ -89,7 +96,7 @@ export function useTeam(onMatchDetected?: (teamId: string) => void) {
         })
       .subscribe();
     return () => { supabase.removeChannel(ch); };
-  }, [setData]);
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   const create = useCallback(async (payload: Omit<Team, 'id' | 'createdAt'>) => {
     const team = await api.createTeam(payload);
@@ -126,16 +133,21 @@ export function useRestaurants() {
 
 export function useChats() {
   const { data, loading, error, reload, setData } = useFetch<ChatList>(api.getChats, []);
+  const reloadRef = useRef(reload);
+  useEffect(() => { reloadRef.current = reload; }, [reload]);
+  const setDataRef = useRef(setData);
+  useEffect(() => { setDataRef.current = setData; }, [setData]);
+
+  const instanceId = useRef(Math.random().toString(36).slice(2)).current;
 
   useEffect(() => {
-    const channelName = `chats_matches_changes_${Math.random().toString(36).slice(2)}`;
-    const ch = supabase.channel(channelName)
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'matches' }, () => reload())
+    const ch = supabase.channel(`chats_matches_changes_${instanceId}`)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'matches' }, () => reloadRef.current())
       .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'messages' }, (payload) => {
         const newMsg = payload.new as { match_id: string; sender_id: string };
         supabase.auth.getUser().then(({ data: { user } }) => {
-          if (!user || newMsg.sender_id === user.id) { reload(); return; }
-          setData(prev => {
+          if (!user || newMsg.sender_id === user.id) { reloadRef.current(); return; }
+          setDataRef.current(prev => {
             if (!prev) return prev;
             return {
               ...prev,
@@ -146,14 +158,14 @@ export function useChats() {
           });
         });
       })
-      .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'messages' }, () => reload())
+      .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'messages' }, () => reloadRef.current())
       .subscribe();
     return () => { supabase.removeChannel(ch); };
-  }, [reload, setData]);
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   const markRead = useCallback(async (id: string | number) => {
     try {
-      await api.markChatRead(id as number);
+      await api.markMessagesRead(id);
       setData(prev => prev ? {
         ...prev,
         active: prev.active.map(c => c.id === id ? { ...c, unread: 0 } : c),
@@ -176,6 +188,8 @@ export function useMessages(chatId: string | number) {
 
   const reloadRef = useRef(reload);
   useEffect(() => { reloadRef.current = reload; }, [reload]);
+  const setDataRef = useRef(setData);
+  useEffect(() => { setDataRef.current = setData; }, [setData]);
 
   useEffect(() => {
     const updateCh = supabase
@@ -185,7 +199,7 @@ export function useMessages(chatId: string | number) {
         (payload) => {
           const updated = payload.new as { id: string; read_by: string[] | null };
           const readBy = updated.read_by ?? [];
-          setData(prev => {
+          setDataRef.current(prev => {
             if (!prev) return prev;
             return prev.map(msg =>
               msg.dbId === String(updated.id)
@@ -197,10 +211,11 @@ export function useMessages(chatId: string | number) {
       .subscribe();
 
     let insertCh: ReturnType<typeof supabase.channel> | null = null;
+    let cancelled = false;
     const myTeamMemberIdsRef = { current: new Set<string>() };
 
     supabase.auth.getUser().then(async ({ data: { user } }) => {
-      if (!user) return;
+      if (!user || cancelled) return;
       const myUserId = user.id;
 
       const { data: myTeamRow } = await supabase.from('teams').select('id').eq('leader_id', myUserId).maybeSingle();
@@ -214,6 +229,8 @@ export function useMessages(chatId: string | number) {
           myTeamMemberIdsRef.current = new Set((members ?? []).map((m: { user_id: string }) => m.user_id));
         }
       }
+
+      if (cancelled) return;
 
       insertCh = supabase
         .channel(`msg_insert:${chatId}`)
@@ -244,16 +261,17 @@ export function useMessages(chatId: string | number) {
               isMyTeam: myTeamMemberIdsRef.current.has(m.sender_id as string),
               readCount: 0,
             };
-            setData(prev => [...(prev ?? []), newMsg]);
+            setDataRef.current(prev => [...(prev ?? []), newMsg]);
           })
         .subscribe();
     });
 
     return () => {
+      cancelled = true;
       supabase.removeChannel(updateCh);
       if (insertCh) supabase.removeChannel(insertCh);
     };
-  }, [chatId, setData]);
+  }, [chatId]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const send = useCallback(async (msg: Omit<Message, 'id'>) => {
     const newMsg = await api.sendMessage(chatId, msg);
@@ -271,19 +289,29 @@ export function useHistory() {
 
 export function useNotifications() {
   const { data, loading, error, reload, setData } = useFetch<Notification[]>(api.getNotifications, []);
+  const reloadRef = useRef(reload);
+  useEffect(() => { reloadRef.current = reload; }, [reload]);
+
+  const instanceId = useRef(Math.random().toString(36).slice(2)).current;
 
   useEffect(() => {
     let ch: ReturnType<typeof supabase.channel> | null = null;
+    let cancelled = false;
+
     supabase.auth.getUser().then(({ data: { user } }) => {
-      if (!user) return;
-      ch = supabase.channel(`notifications_realtime_${user.id}`)
+      if (!user || cancelled) return;
+      ch = supabase.channel(`notifications_realtime_${user.id}_${instanceId}`)
         .on('postgres_changes',
           { event: 'INSERT', schema: 'public', table: 'notifications', filter: `user_id=eq.${user.id}` },
-          () => { reload(); })
+          () => { reloadRef.current(); })
         .subscribe();
     });
-    return () => { if (ch) supabase.removeChannel(ch); };
-  }, [reload]);
+
+    return () => {
+      cancelled = true;
+      if (ch) supabase.removeChannel(ch);
+    };
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   const readAll = useCallback(async () => {
     setData(prev => prev ? prev.map(n => ({ ...n, read: true })) : prev);

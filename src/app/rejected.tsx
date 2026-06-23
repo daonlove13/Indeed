@@ -1,8 +1,10 @@
 import { View, Text, StyleSheet, TouchableOpacity } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
 import { Feather } from '@expo/vector-icons';
 
 export default function RejectedScreen() {
+  const insets = useSafeAreaInsets();
   return (
     <View style={styles.container}>
       <View style={styles.content}>
@@ -15,7 +17,7 @@ export default function RejectedScreen() {
           이름, 학번, 학교명이 모두 보여야 해요.
         </Text>
       </View>
-      <View style={styles.cta}>
+      <View style={[styles.cta, { paddingBottom: Math.max(insets.bottom, 24) }]}>
         <TouchableOpacity style={styles.btn} onPress={() => router.replace('/student-id')}>
           <Text style={styles.btnText}>다시 제출하기</Text>
         </TouchableOpacity>
@@ -38,7 +40,7 @@ const styles = StyleSheet.create({
   },
   title: { fontSize: 24, fontWeight: '700', color: '#0a0a0a', marginBottom: 12, textAlign: 'center' },
   desc: { fontSize: 14, color: '#6a7282', textAlign: 'center', lineHeight: 22 },
-  cta: { paddingHorizontal: 30, paddingBottom: 48 },
+  cta: { paddingHorizontal: 30 },
   btn: {
     backgroundColor: '#000',
     borderRadius: 14,

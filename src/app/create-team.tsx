@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { View, Text, StyleSheet, TouchableOpacity, TextInput, ScrollView, ActivityIndicator } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
 import { Feather } from '@expo/vector-icons';
 import { useTeam } from '../hooks/useData';
@@ -12,6 +13,7 @@ export default function CreateTeamPage() {
   const [errorMsg, setErrorMsg] = useState('');
 
   const { create } = useTeam();
+  const insets = useSafeAreaInsets();
 
   const isValid = teamName.trim().length >= 2 && gender !== null && size !== null;
 
@@ -38,7 +40,7 @@ export default function CreateTeamPage() {
 
   return (
     <View style={styles.container}>
-      <View style={styles.header}>
+      <View style={[styles.header, { marginTop: insets.top }]}>
         <TouchableOpacity onPress={() => router.back()} style={styles.backBtn}>
           <Feather name="chevron-left" size={20} color="#6a7282" />
           <Text style={styles.backText}>뒤로</Text>
@@ -97,7 +99,7 @@ export default function CreateTeamPage() {
         )}
       </ScrollView>
 
-      <View style={styles.cta}>
+      <View style={[styles.cta, { paddingBottom: Math.max(insets.bottom, 24) }]}>
         <TouchableOpacity
           style={[styles.ctaBtn, (!isValid || loading) && styles.ctaBtnDisabled]}
           onPress={handleCreate}
@@ -116,7 +118,7 @@ export default function CreateTeamPage() {
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: '#fff' },
   header: {
-    height: 56, marginTop: 44, paddingHorizontal: 16,
+    height: 56, paddingHorizontal: 16,
     flexDirection: 'row', alignItems: 'center',
   },
   backBtn: { flexDirection: 'row', alignItems: 'center', gap: 4 },
@@ -147,7 +149,7 @@ const styles = StyleSheet.create({
     borderRadius: 12, paddingHorizontal: 16, paddingVertical: 12,
   },
   errorText: { fontSize: 12, color: '#dc2626', lineHeight: 18 },
-  cta: { paddingHorizontal: 24, paddingBottom: 40, paddingTop: 8, backgroundColor: '#fff' },
+  cta: { paddingHorizontal: 24, paddingTop: 8, backgroundColor: '#fff' },
   ctaBtn: {
     backgroundColor: '#000', borderRadius: 14, paddingVertical: 15,
     flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8,

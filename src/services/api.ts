@@ -300,8 +300,7 @@ export async function getTeam(): Promise<Team | null> {
     if (!memberTeam) return null;
 
     return mapTeamRow(memberTeam);
-  } catch (e) {
-    console.error('getTeam error:', e);
+  } catch {
     return null;
   }
 }
@@ -510,8 +509,7 @@ export async function getChats(): Promise<ChatList> {
       active: chatItems.filter(c => c.status === 'active'),
       done: chatItems.filter(c => c.status === 'done'),
     };
-  } catch (e) {
-    console.error('getChats error:', e);
+  } catch {
     return { active: [], done: [] };
   }
 }
@@ -565,10 +563,6 @@ export async function toggleChatMute(matchId: string): Promise<boolean> {
   }
 }
 
-export async function markChatRead(_id: number): Promise<{ ok: boolean }> {
-  return { ok: true };
-}
-
 export async function completeChat(matchId: string | number): Promise<{ ok: boolean }> {
   try {
     await supabase.from('matches').update({ status: 'completed' }).eq('id', matchId);
@@ -619,8 +613,7 @@ export async function getMessages(chatId: string | number): Promise<Message[]> {
         isMyTeam,
       };
     });
-  } catch (e) {
-    console.error('getMessages error:', e);
+  } catch {
     return [];
   }
 }
@@ -747,7 +740,7 @@ export async function getInviteInfo(): Promise<{ link: string; code: string } | 
 
   const { data } = await supabase.from('teams').select('invite_code').eq('id', team.id).maybeSingle();
   const code = data?.invite_code ?? '';
-  return { link: `https://pmompybsbnkrjhdhikcr.supabase.co/invite?code=${code}`, code };
+  return { link: `indeed://invite?code=${code}`, code };
 }
 
 export async function getTeamByInviteCode(code: string): Promise<Team | null> {

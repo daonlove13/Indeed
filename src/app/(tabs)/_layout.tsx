@@ -1,5 +1,6 @@
 import { Tabs } from 'expo-router';
 import { View, Text, StyleSheet } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Feather } from '@expo/vector-icons';
 import { useChats } from '../../hooks/useData';
 import { useMemo } from 'react';
@@ -28,12 +29,13 @@ export default function TabsLayout() {
     () => chats.active.reduce((sum, c) => sum + (c.unread ?? 0), 0),
     [chats],
   );
+  const insets = useSafeAreaInsets();
 
   return (
     <Tabs
       screenOptions={{
         headerShown: false,
-        tabBarStyle: styles.tabBar,
+        tabBarStyle: [styles.tabBar, { height: 72 + insets.bottom, paddingBottom: insets.bottom }],
         tabBarLabelStyle: styles.tabLabel,
         tabBarActiveTintColor: '#0a0a0a',
         tabBarInactiveTintColor: '#99a1af',
@@ -79,7 +81,6 @@ const styles = StyleSheet.create({
     borderTopColor: '#f3f4f6',
     borderTopWidth: 1,
     paddingTop: 10,
-    height: 72,
   },
   tabLabel: {
     fontSize: 12,

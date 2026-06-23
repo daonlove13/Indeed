@@ -1,9 +1,9 @@
 import { useState } from 'react';
 import { View, Text, StyleSheet, TouchableOpacity, FlatList, ActivityIndicator } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
 import { Feather } from '@expo/vector-icons';
 import { useChats, useNotifications } from '../../hooks/useData';
-import { toggleChatMute } from '../../services/api';
 import type { ChatItem } from '../../services/api';
 
 function getExpiryLabel(expiresAt?: string): { label: string; urgent: boolean } | null {
@@ -52,13 +52,14 @@ function ChatItemRow({ chat, onPress }: { chat: ChatItem; onPress: () => void })
 export default function ChatScreen() {
   const { chats, loading } = useChats();
   const { unreadCount } = useNotifications();
+  const insets = useSafeAreaInsets();
   const [activeTab, setActiveTab] = useState<'active' | 'done'>('active');
 
   const displayList = activeTab === 'active' ? chats.active : chats.done;
 
   return (
     <View style={styles.container}>
-      <View style={styles.header}>
+      <View style={[styles.header, { marginTop: insets.top }]}>
         <Text style={styles.headerLogo}>indeed</Text>
         <TouchableOpacity style={styles.bellBtn} onPress={() => router.push('/notifications')}>
           <Feather name="bell" size={22} color="#000" />
@@ -124,7 +125,6 @@ const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: '#fff' },
   header: {
     height: 56,
-    marginTop: 44,
     paddingHorizontal: 16,
     flexDirection: 'row',
     alignItems: 'center',

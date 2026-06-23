@@ -1,5 +1,6 @@
 import { useEffect } from 'react';
 import { View, Text, StyleSheet, TouchableOpacity, Animated } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { router, useLocalSearchParams } from 'expo-router';
 import { Feather } from '@expo/vector-icons';
 
@@ -8,7 +9,7 @@ export default function MatchSuccessPage() {
     department: string;
     myDepartment: string;
   }>();
-
+  const insets = useSafeAreaInsets();
   const scaleAnim = new Animated.Value(0.5);
 
   useEffect(() => {
@@ -37,7 +38,7 @@ export default function MatchSuccessPage() {
         </Text>
       </View>
 
-      <View style={styles.footer}>
+      <View style={[styles.footer, { paddingBottom: Math.max(insets.bottom, 24) }]}>
         <TouchableOpacity
           style={styles.primaryBtn}
           onPress={() => {
@@ -70,7 +71,7 @@ const styles = StyleSheet.create({
   subtitle: { fontSize: 18, color: '#0a0a0a', textAlign: 'center', lineHeight: 26, marginBottom: 16 },
   bold: { fontWeight: '700' },
   desc: { fontSize: 14, color: '#6a7282', textAlign: 'center', lineHeight: 22 },
-  footer: { paddingHorizontal: 24, paddingBottom: 48, gap: 12 },
+  footer: { paddingHorizontal: 24, gap: 12 },
   primaryBtn: {
     backgroundColor: '#000', borderRadius: 14, paddingVertical: 16,
     flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8,

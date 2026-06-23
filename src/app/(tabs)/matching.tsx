@@ -1,15 +1,16 @@
 import { useState, useEffect } from 'react';
 import { View, Text, StyleSheet, TouchableOpacity, ScrollView, Alert, ActivityIndicator } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
 import { Feather } from '@expo/vector-icons';
 import { useTeam, useNotifications } from '../../hooks/useData';
-import { getActiveChatCount } from '../../services/api';
+import { getActiveChatCount, leaveTeam } from '../../services/api';
 import { supabase } from '../../lib/supabase';
-import { leaveTeam } from '../../services/api';
 
 export default function MatchingScreen() {
-  const { team, reload: reloadTeam, update: updateTeam, toggleApply } = useTeam();
+  const { team, reload: reloadTeam, toggleApply } = useTeam();
   const { unreadCount } = useNotifications();
+  const insets = useSafeAreaInsets();
   const [saving, setSaving] = useState(false);
   const [activeChatCount, setActiveChatCount] = useState(0);
   const [isLeader, setIsLeader] = useState(false);
@@ -19,8 +20,9 @@ export default function MatchingScreen() {
   }, [team]);
 
   useEffect(() => {
+    if (!team) { setIsLeader(false); return; }
     supabase.auth.getUser().then(({ data: { user } }) => {
-      if (!user || !team) return;
+      if (!user) return;
       const leaderMember = team.members.find(m => m.role === '팀장');
       setIsLeader(leaderMember?.id === user.id);
     });
@@ -58,19 +60,27 @@ export default function MatchingScreen() {
     ]);
   };
 
+  const headerNode = (
+    <View style={[styles.header, { marginTop: insets.top }]}>
+      <Text style={styles.headerLogo}>indeed</Text>
+      <TouchableOpacity style={styles.bellBtn} onPress={() => router.push('/notifications')}>
+        <Feather name="bell" size={22} color="#000" />
+        {unreadCount > 0 && <View style={styles.bellDot} />}
+      </TouchableOpacity>
+    </View>
+  );
+
+  const subHeaderNode = (
+    <View style={styles.subHeader}>
+      <Text style={styles.subHeaderTitle}>매칭</Text>
+    </View>
+  );
+
   if (!team) {
     return (
       <View style={styles.container}>
-        <View style={styles.header}>
-          <Text style={styles.headerLogo}>indeed</Text>
-          <TouchableOpacity style={styles.bellBtn} onPress={() => router.push('/notifications')}>
-            <Feather name="bell" size={22} color="#000" />
-            {unreadCount > 0 && <View style={styles.bellDot} />}
-          </TouchableOpacity>
-        </View>
-        <View style={styles.subHeader}>
-          <Text style={styles.subHeaderTitle}>매칭</Text>
-        </View>
+        {headerNode}
+        {subHeaderNode}
         <View style={styles.emptyContainer}>
           <Text style={styles.emptyTitle}>팀이 없어요</Text>
           <Text style={styles.emptyDesc}>먼저 홈에서 팀을 만들거나 합류해주세요</Text>
@@ -84,18 +94,25 @@ export default function MatchingScreen() {
 
   return (
     <View style={styles.container}>
-      <View style={styles.header}>
-        <Text style={styles.headerLogo}>indeed</Text>
-        <TouchableOpacity style={styles.bellBtn} onPress={() => router.push('/notifications')}>
-          <Feather name="bell" size={22} color="#000" />
-          {unreadCount > 0 && <View style={styles.bellDot} />}
-        </TouchableOpacity>
-      </View>
-      <View style={styles.subHeader}>
-        <Text style={styles.subHeaderTitle}>매칭</Text>
-      </View>
+      {headerNode}
+      {subHeaderNode}
 
-      {team.applied ? (
+      {team.status === 'matched' ? (
+        <View style={styles.matchedContainer}>
+          <View style={styles.matchedIcon}>
+            <Feather name="check" size={32} color="#fff" />
+          </View>
+          <Text style={styles.matchedTitle}>매칭 완료!</Text>
+          <Text style={styles.matchedDesc}>
+            상대 팀과 연결됐어요.{'\n'}
+            채팅 탭에서 대화를 시작해보세요!
+          </Text>
+          <TouchableOpacity style={styles.goToChatBtn} onPress={() => router.push('/(tabs)/chat')}>
+            <Text style={styles.goToChatBtnText}>채팅하러 가기</Text>
+            <Feather name="message-circle" size={16} color="#fff" />
+          </TouchableOpacity>
+        </View>
+      ) : team.applied ? (
         <View style={styles.waitingContainer}>
           <View style={styles.waitingIcon}>
             <Feather name="clock" size={32} color="#fff" />
@@ -105,9 +122,11 @@ export default function MatchingScreen() {
             상대 팀이 나타나면 자동으로 매칭돼요.{'\n'}
             최대한 빨리 연결해드릴게요!
           </Text>
-          <TouchableOpacity style={styles.cancelBtn} onPress={handleCancelApply}>
-            <Text style={styles.cancelBtnText}>신청 취소하기</Text>
-          </TouchableOpacity>
+          {isLeader && (
+            <TouchableOpacity style={styles.cancelBtn} onPress={handleCancelApply}>
+              <Text style={styles.cancelBtnText}>신청 취소하기</Text>
+            </TouchableOpacity>
+          )}
         </View>
       ) : (
         <ScrollView style={styles.scroll} contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}>
@@ -201,7 +220,6 @@ const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: '#fff' },
   header: {
     height: 56,
-    marginTop: 44,
     paddingHorizontal: 16,
     flexDirection: 'row',
     alignItems: 'center',
@@ -225,10 +243,21 @@ const styles = StyleSheet.create({
   emptyContainer: { flex: 1, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 40 },
   emptyTitle: { fontSize: 20, fontWeight: '700', color: '#0a0a0a', marginBottom: 8 },
   emptyDesc: { fontSize: 14, color: '#6a7282', textAlign: 'center', marginBottom: 24 },
-  goHomeBtn: {
-    backgroundColor: '#000', borderRadius: 14, paddingHorizontal: 24, paddingVertical: 12,
-  },
+  goHomeBtn: { backgroundColor: '#000', borderRadius: 14, paddingHorizontal: 24, paddingVertical: 12 },
   goHomeBtnText: { fontSize: 15, fontWeight: '600', color: '#fff' },
+  matchedContainer: { flex: 1, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 40 },
+  matchedIcon: {
+    width: 72, height: 72, backgroundColor: '#000', borderRadius: 36,
+    alignItems: 'center', justifyContent: 'center', marginBottom: 20,
+  },
+  matchedTitle: { fontSize: 22, fontWeight: '700', color: '#0a0a0a', marginBottom: 12 },
+  matchedDesc: { fontSize: 14, color: '#6a7282', textAlign: 'center', lineHeight: 22, marginBottom: 32 },
+  goToChatBtn: {
+    backgroundColor: '#000', borderRadius: 14,
+    paddingVertical: 14, paddingHorizontal: 32,
+    flexDirection: 'row', alignItems: 'center', gap: 8,
+  },
+  goToChatBtnText: { fontSize: 15, fontWeight: '600', color: '#fff' },
   waitingContainer: { flex: 1, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 40 },
   waitingIcon: {
     width: 72, height: 72, backgroundColor: '#000', borderRadius: 36,
@@ -243,15 +272,10 @@ const styles = StyleSheet.create({
   cancelBtnText: { fontSize: 15, fontWeight: '600', color: '#6a7282' },
   scroll: { flex: 1 },
   scrollContent: { padding: 16, paddingBottom: 32 },
-  teamInfoCard: {
-    backgroundColor: '#f9fafb', borderRadius: 20, padding: 20, marginBottom: 16,
-  },
+  teamInfoCard: { backgroundColor: '#f9fafb', borderRadius: 20, padding: 20, marginBottom: 16 },
   teamInfoName: { fontSize: 20, fontWeight: '700', color: '#0a0a0a', marginBottom: 12 },
   teamInfoRow: { flexDirection: 'row', gap: 8, marginBottom: 16 },
-  infoBadge: {
-    backgroundColor: '#e5e7eb', borderRadius: 100,
-    paddingHorizontal: 12, paddingVertical: 4,
-  },
+  infoBadge: { backgroundColor: '#e5e7eb', borderRadius: 100, paddingHorizontal: 12, paddingVertical: 4 },
   infoBadgeText: { fontSize: 12, fontWeight: '600', color: '#0a0a0a' },
   membersSection: { gap: 8 },
   memberRow: { flexDirection: 'row', alignItems: 'center', gap: 12 },
@@ -261,9 +285,7 @@ const styles = StyleSheet.create({
   },
   memberAvatarText: { fontSize: 13, fontWeight: '700', color: '#fff' },
   memberNameText: { flex: 1, fontSize: 14, color: '#0a0a0a', fontWeight: '500' },
-  roleBadge: {
-    backgroundColor: '#f3f4f6', borderRadius: 100, paddingHorizontal: 8, paddingVertical: 2,
-  },
+  roleBadge: { backgroundColor: '#f3f4f6', borderRadius: 100, paddingHorizontal: 8, paddingVertical: 2 },
   roleBadgeLeader: { backgroundColor: '#000' },
   roleText: { fontSize: 11, color: '#6a7282' },
   roleTextLeader: { color: '#fff' },
@@ -286,8 +308,7 @@ const styles = StyleSheet.create({
   },
   memberOnlyText: { fontSize: 13, color: '#6a7282' },
   leaveTeamBtn: {
-    borderWidth: 1, borderColor: '#e5e7eb', borderRadius: 14, paddingVertical: 14,
-    alignItems: 'center',
+    borderWidth: 1, borderColor: '#e5e7eb', borderRadius: 14, paddingVertical: 14, alignItems: 'center',
   },
   leaveTeamText: { fontSize: 14, color: '#6a7282' },
 });

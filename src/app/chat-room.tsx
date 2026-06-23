@@ -3,6 +3,7 @@ import {
   View, Text, StyleSheet, TouchableOpacity, TextInput,
   FlatList, KeyboardAvoidingView, Platform, ActivityIndicator, Alert,
 } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { router, useLocalSearchParams } from 'expo-router';
 import { Feather } from '@expo/vector-icons';
 import { useMessages } from '../hooks/useData';
@@ -13,6 +14,7 @@ export default function ChatRoomPage() {
   const { id, name } = useLocalSearchParams<{ id: string; name: string }>();
   const chatId = id ?? '';
   const { messages, loading, send } = useMessages(chatId);
+  const insets = useSafeAreaInsets();
   const [inputText, setInputText] = useState('');
   const [sending, setSending] = useState(false);
   const flatListRef = useRef<FlatList>(null);
@@ -22,14 +24,6 @@ export default function ChatRoomPage() {
       markMessagesRead(chatId);
     }
   }, [chatId]);
-
-  useEffect(() => {
-    if (messages.length > 0) {
-      setTimeout(() => {
-        flatListRef.current?.scrollToEnd({ animated: false });
-      }, 100);
-    }
-  }, [messages.length]);
 
   const handleSend = async () => {
     if (!inputText.trim() || sending) return;
@@ -92,7 +86,7 @@ export default function ChatRoomPage() {
       behavior={Platform.OS === 'ios' ? 'padding' : undefined}
       keyboardVerticalOffset={0}
     >
-      <View style={styles.header}>
+      <View style={[styles.header, { marginTop: insets.top }]}>
         <TouchableOpacity onPress={() => router.back()} style={styles.backBtn}>
           <Feather name="chevron-left" size={24} color="#000" />
         </TouchableOpacity>
@@ -110,7 +104,7 @@ export default function ChatRoomPage() {
         <FlatList
           ref={flatListRef}
           data={messages}
-          keyExtractor={(item) => String(item.id)}
+          keyExtractor={(item) => item.dbId ?? String(item.id)}
           renderItem={renderMessage}
           contentContainerStyle={styles.messageList}
           showsVerticalScrollIndicator={false}
@@ -118,7 +112,7 @@ export default function ChatRoomPage() {
         />
       )}
 
-      <View style={styles.inputContainer}>
+      <View style={[styles.inputContainer, { paddingBottom: Math.max(insets.bottom, 10) }]}>
         <TextInput
           style={styles.textInput}
           value={inputText}
@@ -148,7 +142,6 @@ const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: '#fff' },
   header: {
     height: 56,
-    marginTop: 44,
     paddingHorizontal: 8,
     flexDirection: 'row',
     alignItems: 'center',
@@ -205,7 +198,7 @@ const styles = StyleSheet.create({
     alignItems: 'flex-end',
     paddingHorizontal: 16,
     paddingVertical: 10,
-    paddingBottom: Platform.OS === 'ios' ? 24 : 16,
+    paddingBottom: 10,
     borderTopWidth: 1,
     borderTopColor: '#f3f4f6',
     gap: 8,

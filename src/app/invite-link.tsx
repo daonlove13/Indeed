@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react';
 import { View, Text, StyleSheet, TouchableOpacity, Share, ActivityIndicator } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import * as Clipboard from 'expo-clipboard';
 import { router } from 'expo-router';
 import { Feather } from '@expo/vector-icons';
@@ -11,6 +12,7 @@ export default function InviteLinkPage() {
   const [inviteInfo, setInviteInfo] = useState<{ link: string; code: string } | null>(null);
   const [loading, setLoading] = useState(true);
   const [copied, setCopied] = useState(false);
+  const insets = useSafeAreaInsets();
 
   useEffect(() => {
     getInviteInfo().then(info => {
@@ -38,7 +40,7 @@ export default function InviteLinkPage() {
 
   return (
     <View style={styles.container}>
-      <View style={styles.header}>
+      <View style={[styles.header, { marginTop: insets.top }]}>
         <TouchableOpacity onPress={() => router.back()} style={styles.backBtn}>
           <Feather name="chevron-left" size={20} color="#6a7282" />
           <Text style={styles.backText}>뒤로</Text>
@@ -83,7 +85,7 @@ export default function InviteLinkPage() {
         )}
       </View>
 
-      <View style={styles.footer}>
+      <View style={[styles.footer, { paddingBottom: Math.max(insets.bottom, 24) }]}>
         <TouchableOpacity style={styles.doneBtn} onPress={() => router.replace('/(tabs)')}>
           <Text style={styles.doneBtnText}>홈으로 가기</Text>
         </TouchableOpacity>
@@ -95,7 +97,7 @@ export default function InviteLinkPage() {
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: '#fff' },
   header: {
-    height: 56, marginTop: 44, paddingHorizontal: 16,
+    height: 56, paddingHorizontal: 16,
     flexDirection: 'row', alignItems: 'center',
   },
   backBtn: { flexDirection: 'row', alignItems: 'center', gap: 4 },
@@ -126,7 +128,7 @@ const styles = StyleSheet.create({
   },
   shareBtnText: { fontSize: 16, fontWeight: '600', color: '#fff' },
   errorText: { fontSize: 14, color: '#6a7282', textAlign: 'center', marginTop: 40 },
-  footer: { paddingHorizontal: 24, paddingBottom: 40, paddingTop: 8 },
+  footer: { paddingHorizontal: 24, paddingTop: 8 },
   doneBtn: {
     borderWidth: 2, borderColor: '#e5e7eb', borderRadius: 14, paddingVertical: 14,
     alignItems: 'center',

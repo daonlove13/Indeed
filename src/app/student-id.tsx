@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react';
 import {
   View, Text, StyleSheet, TouchableOpacity, ActivityIndicator, ScrollView, Alert,
 } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
 import { Feather } from '@expo/vector-icons';
 import * as ImagePicker from 'expo-image-picker';
@@ -16,6 +17,7 @@ export default function StudentIdPage({ defaultState = 'idle' }: Props) {
   const [errorMsg, setErrorMsg] = useState('');
   const [maleWaiting, setMaleWaiting] = useState(0);
   const [femaleWaiting, setFemaleWaiting] = useState(0);
+  const insets = useSafeAreaInsets();
 
   useEffect(() => {
     getStats().then(s => {
@@ -62,7 +64,7 @@ export default function StudentIdPage({ defaultState = 'idle' }: Props) {
 
   return (
     <View style={styles.container}>
-      <View style={styles.header}>
+      <View style={[styles.header, { marginTop: insets.top }]}>
         {!isPendingState && state !== 'uploading' && (
           <TouchableOpacity onPress={() => router.back()} style={styles.backBtn}>
             <Feather name="chevron-left" size={20} color="#6a7282" />
@@ -199,7 +201,6 @@ const styles = StyleSheet.create({
   },
   header: {
     height: 56,
-    marginTop: 44,
     paddingHorizontal: 16,
     flexDirection: 'row',
     alignItems: 'center',

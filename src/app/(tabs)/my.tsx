@@ -1,4 +1,5 @@
 import { View, Text, StyleSheet, TouchableOpacity, ScrollView, Alert } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
 import { Feather } from '@expo/vector-icons';
 import { useProfile, useHistory, useNotifications } from '../../hooks/useData';
@@ -8,6 +9,7 @@ export default function MyScreen() {
   const { profile, loading: profileLoading } = useProfile();
   const { history } = useHistory();
   const { unreadCount } = useNotifications();
+  const insets = useSafeAreaInsets();
 
   const initial = profile?.name?.[0] ?? '?';
   const recentHistory = history.slice(0, 2);
@@ -35,7 +37,7 @@ export default function MyScreen() {
 
   return (
     <View style={styles.container}>
-      <View style={styles.header}>
+      <View style={[styles.header, { marginTop: insets.top }]}>
         <Text style={styles.headerLogo}>indeed</Text>
         <TouchableOpacity style={styles.bellBtn} onPress={() => router.push('/notifications')}>
           <Feather name="bell" size={22} color="#000" />
@@ -127,7 +129,6 @@ const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: '#fff' },
   header: {
     height: 56,
-    marginTop: 44,
     paddingHorizontal: 16,
     flexDirection: 'row',
     alignItems: 'center',
