@@ -1,13 +1,13 @@
 import { useState, useRef, useEffect } from 'react';
 import {
   View, Text, StyleSheet, TouchableOpacity, TextInput,
-  FlatList, KeyboardAvoidingView, Platform, ActivityIndicator, Alert,
+  FlatList, KeyboardAvoidingView, Platform, ActivityIndicator, Alert, Modal,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { router, useLocalSearchParams } from 'expo-router';
 import { Feather } from '@expo/vector-icons';
 import { useMessages } from '../hooks/useData';
-import { markMessagesRead, completeChat } from '../services/api';
+import { markMessagesRead, completeChat, submitReport } from '../services/api';
 import type { Message } from '../services/api';
 
 export default function ChatRoomPage() {
@@ -17,6 +17,9 @@ export default function ChatRoomPage() {
   const insets = useSafeAreaInsets();
   const [inputText, setInputText] = useState('');
   const [sending, setSending] = useState(false);
+  const [reportVisible, setReportVisible] = useState(false);
+  const [reportText, setReportText] = useState('');
+  const [reporting, setReporting] = useState(false);
   const flatListRef = useRef<FlatList>(null);
 
   useEffect(() => {
@@ -48,6 +51,21 @@ export default function ChatRoomPage() {
         },
       },
     ]);
+  };
+
+  const handleReport = async () => {
+    if (!reportText.trim()) return;
+    setReporting(true);
+    try {
+      await submitReport(chatId, reportText.trim());
+      setReportVisible(false);
+      setReportText('');
+      Alert.alert('신고 완료', '신고가 접수됐어요. 검토 후 조치할게요.');
+    } catch (e) {
+      Alert.alert('오류', String(e));
+    } finally {
+      setReporting(false);
+    }
   };
 
   const renderMessage = ({ item }: { item: Message }) => {
@@ -83,7 +101,7 @@ export default function ChatRoomPage() {
   return (
     <KeyboardAvoidingView
       style={styles.container}
-      behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+      behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
       keyboardVerticalOffset={0}
     >
       <View style={[styles.header, { marginTop: insets.top }]}>
@@ -91,9 +109,14 @@ export default function ChatRoomPage() {
           <Feather name="chevron-left" size={24} color="#000" />
         </TouchableOpacity>
         <Text style={styles.headerName} numberOfLines={1}>{name}</Text>
-        <TouchableOpacity style={styles.moreBtn} onPress={handleComplete}>
-          <Text style={styles.moreText}>완료</Text>
-        </TouchableOpacity>
+        <View style={styles.headerActions}>
+          <TouchableOpacity style={styles.moreBtn} onPress={() => setReportVisible(true)}>
+            <Feather name="alert-circle" size={18} color="#6a7282" />
+          </TouchableOpacity>
+          <TouchableOpacity style={styles.moreBtn} onPress={handleComplete}>
+            <Text style={styles.moreText}>완료</Text>
+          </TouchableOpacity>
+        </View>
       </View>
 
       {loading ? (
@@ -111,6 +134,36 @@ export default function ChatRoomPage() {
           onContentSizeChange={() => flatListRef.current?.scrollToEnd({ animated: true })}
         />
       )}
+
+      <Modal visible={reportVisible} transparent animationType="slide" onRequestClose={() => setReportVisible(false)}>
+        <View style={styles.modalOverlay}>
+          <View style={styles.modalBox}>
+            <Text style={styles.modalTitle}>신고하기</Text>
+            <Text style={styles.modalSub}>채팅 내 부적절한 행동을 신고해주세요.</Text>
+            <TextInput
+              style={styles.modalInput}
+              value={reportText}
+              onChangeText={setReportText}
+              placeholder="신고 사유를 입력해주세요"
+              placeholderTextColor="#99a1af"
+              multiline
+              maxLength={300}
+            />
+            <View style={styles.modalBtns}>
+              <TouchableOpacity style={styles.modalCancelBtn} onPress={() => { setReportVisible(false); setReportText(''); }}>
+                <Text style={styles.modalCancelText}>취소</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={[styles.modalSubmitBtn, (!reportText.trim() || reporting) && styles.ctaBtnDisabled]}
+                onPress={handleReport}
+                disabled={!reportText.trim() || reporting}
+              >
+                {reporting ? <ActivityIndicator size="small" color="#fff" /> : <Text style={styles.modalSubmitText}>신고하기</Text>}
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
 
       <View style={[styles.inputContainer, { paddingBottom: Math.max(insets.bottom, 10) }]}>
         <TextInput
@@ -150,8 +203,26 @@ const styles = StyleSheet.create({
   },
   backBtn: { padding: 8 },
   headerName: { flex: 1, fontSize: 16, fontWeight: '700', color: '#0a0a0a', marginHorizontal: 8 },
-  moreBtn: { paddingHorizontal: 12, paddingVertical: 8 },
+  headerActions: { flexDirection: 'row', alignItems: 'center' },
+  moreBtn: { paddingHorizontal: 10, paddingVertical: 8 },
   moreText: { fontSize: 14, color: '#6a7282' },
+  modalOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'flex-end' },
+  modalBox: { backgroundColor: '#fff', borderTopLeftRadius: 24, borderTopRightRadius: 24, padding: 24, paddingBottom: 40 },
+  modalTitle: { fontSize: 18, fontWeight: '700', color: '#0a0a0a', marginBottom: 6 },
+  modalSub: { fontSize: 13, color: '#6a7282', marginBottom: 16 },
+  modalInput: {
+    backgroundColor: '#f3f4f6', borderRadius: 14, padding: 14,
+    fontSize: 14, color: '#0a0a0a', minHeight: 100, textAlignVertical: 'top', marginBottom: 16,
+  },
+  modalBtns: { flexDirection: 'row', gap: 10 },
+  modalCancelBtn: {
+    flex: 1, paddingVertical: 14, borderRadius: 14,
+    backgroundColor: '#f3f4f6', alignItems: 'center',
+  },
+  modalCancelText: { fontSize: 15, fontWeight: '600', color: '#6a7282' },
+  modalSubmitBtn: { flex: 1, paddingVertical: 14, borderRadius: 14, backgroundColor: '#000', alignItems: 'center' },
+  modalSubmitText: { fontSize: 15, fontWeight: '600', color: '#fff' },
+  ctaBtnDisabled: { backgroundColor: '#d1d5db' },
   loadingContainer: { flex: 1, alignItems: 'center', justifyContent: 'center' },
   messageList: { paddingHorizontal: 16, paddingVertical: 12, gap: 8 },
   botMsgContainer: {

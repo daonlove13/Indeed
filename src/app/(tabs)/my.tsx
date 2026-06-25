@@ -28,12 +28,13 @@ export default function MyScreen() {
   };
 
   const menuItems = [
+    ...(profile?.isAdmin ? [{ label: '관리자 메뉴', onPress: () => router.push('/admin' as never), admin: true }] : []),
     { label: '과팅 내역', onPress: () => router.push('/history') },
     { label: '알림', onPress: () => router.push('/notifications') },
     { label: '이용약관', onPress: () => {} },
     { label: '개인정보처리방침', onPress: () => {} },
     { label: '로그아웃', onPress: handleLogout, danger: true },
-  ];
+  ] as { label: string; onPress: () => void; danger?: boolean; admin?: boolean }[];
 
   return (
     <View style={styles.container}>
@@ -111,7 +112,7 @@ export default function MyScreen() {
               style={styles.menuItem}
               onPress={item.onPress}
             >
-              <Text style={[styles.menuLabel, item.danger && styles.menuLabelDanger]}>
+              <Text style={[styles.menuLabel, item.danger && styles.menuLabelDanger, item.admin && styles.menuLabelAdmin]}>
                 {item.label}
               </Text>
               <Feather name="chevron-right" size={16} color="#d1d5db" />
@@ -203,4 +204,5 @@ const styles = StyleSheet.create({
   },
   menuLabel: { fontSize: 15, color: '#0a0a0a' },
   menuLabelDanger: { color: '#e24b4a' },
+  menuLabelAdmin: { color: '#2563eb', fontWeight: '600' },
 });

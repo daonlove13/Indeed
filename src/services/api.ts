@@ -10,6 +10,7 @@ export interface UserProfile {
   penalties: number;
   verified: boolean;
   studentCardUrl?: string;
+  isAdmin?: boolean;
 }
 
 export interface TeamMember {
@@ -162,6 +163,7 @@ export async function getProfile(): Promise<UserProfile> {
     penalties: data.penalties ?? 0,
     verified: data.verified ?? false,
     studentCardUrl: data.student_card_url ?? undefined,
+    isAdmin: data.is_admin ?? false,
   };
 }
 
@@ -231,6 +233,9 @@ export async function uploadStudentCard(uri: string, mimeType: string = 'image/j
     .eq('id', userId);
 
   if (updateError) throw new Error(`학생증 경로 저장 오류: ${updateError.message}`);
+
+  // 재제출 시 심사 대기 상태로 초기화
+  await supabase.from('users').update({ verified_status: 'pending', rejection_reason: null }).eq('id', userId);
 
   return path;
 }
@@ -312,8 +317,11 @@ export async function createTeam(payload: Omit<Team, 'id' | 'createdAt'>): Promi
   const activeChatCount = await getActiveChatCount();
   if (activeChatCount >= 3) throw new Error('활성 채팅방이 3개예요. 과팅을 완료한 후 다시 시도해주세요.');
 
-  const { data: oldTeam } = await supabase.from('teams').select('id').eq('leader_id', userId).maybeSingle();
+  const { data: oldTeam } = await supabase.from('teams').select('id, status').eq('leader_id', userId).maybeSingle();
   if (oldTeam?.id) {
+    if (oldTeam.status === 'matched') {
+      throw new Error('진행 중인 과팅이 있어요. 과팅을 완료한 후 팀을 재생성해주세요.');
+    }
     await supabase.from('team_members').delete().eq('team_id', oldTeam.id);
     await supabase.from('teams').delete().eq('id', oldTeam.id);
   }
@@ -375,12 +383,75 @@ export async function toggleApply(): Promise<Team> {
   if (team.applied) {
     const { error } = await supabase.from('teams').update({ status: 'waiting' }).eq('id', team.id);
     if (error) throw new Error(`신청 취소 오류: ${error.message}`);
-    return { ...team, applied: false };
+    return { ...team, applied: false, status: 'waiting' };
   }
 
-  const { data, error } = await supabase.rpc('apply_and_match', { my_team_id: team.id });
+  const { error } = await supabase.rpc('apply_and_match', { my_team_id: team.id });
   if (error) throw new Error(`신청 상태 변경 오류: ${error.message}`);
-  return { ...team, applied: true };
+
+  // RPC가 매칭에 성공했을 수도 있으므로 DB에서 최신 상태 재조회
+  const freshTeam = await getTeam();
+  return freshTeam ?? { ...team, applied: true, status: 'applied' };
+}
+
+// ── 약속 확인 / 과팅 종료 (원자적 처리) ─────────────────────────────────────
+//
+// REQUIRED SQL (Supabase SQL Editor에 추가 필요):
+//
+// CREATE OR REPLACE FUNCTION toggle_meeting_confirmation(p_match_id uuid, p_user_id text)
+// RETURNS json LANGUAGE plpgsql SECURITY DEFINER AS $$
+// DECLARE v_arr text[]; v_confirmed boolean;
+// BEGIN
+//   SELECT meeting_confirmed_by INTO v_arr FROM matches WHERE id = p_match_id FOR UPDATE;
+//   v_arr := COALESCE(v_arr, '{}');
+//   IF p_user_id = ANY(v_arr) THEN
+//     v_arr := array_remove(v_arr, p_user_id); v_confirmed := false;
+//   ELSE
+//     v_arr := array_append(v_arr, p_user_id); v_confirmed := true;
+//   END IF;
+//   UPDATE matches SET meeting_confirmed_by = v_arr WHERE id = p_match_id;
+//   RETURN json_build_object('confirmed', v_confirmed, 'count', COALESCE(array_length(v_arr,1),0));
+// END; $$;
+//
+// CREATE OR REPLACE FUNCTION toggle_dating_completion(p_match_id uuid, p_user_id text)
+// RETURNS json LANGUAGE plpgsql SECURITY DEFINER AS $$
+// DECLARE v_arr text[]; v_completed boolean;
+// BEGIN
+//   SELECT dating_completed_by INTO v_arr FROM matches WHERE id = p_match_id FOR UPDATE;
+//   v_arr := COALESCE(v_arr, '{}');
+//   IF p_user_id = ANY(v_arr) THEN
+//     v_arr := array_remove(v_arr, p_user_id); v_completed := false;
+//   ELSE
+//     v_arr := array_append(v_arr, p_user_id); v_completed := true;
+//   END IF;
+//   UPDATE matches SET dating_completed_by = v_arr WHERE id = p_match_id;
+//   RETURN json_build_object('completed', v_completed, 'count', COALESCE(array_length(v_arr,1),0));
+// END; $$;
+
+export async function toggleMeetingConfirmation(
+  matchId: string,
+): Promise<{ confirmed: boolean; count: number }> {
+  const userId = await getCurrentUserId();
+  if (!userId) throw new Error('인증 정보가 없습니다.');
+  const { data, error } = await supabase.rpc('toggle_meeting_confirmation', {
+    p_match_id: matchId,
+    p_user_id: userId,
+  });
+  if (error) throw new Error(`약속 확인 오류: ${error.message}`);
+  return data as { confirmed: boolean; count: number };
+}
+
+export async function toggleDatingCompletion(
+  matchId: string,
+): Promise<{ completed: boolean; count: number }> {
+  const userId = await getCurrentUserId();
+  if (!userId) throw new Error('인증 정보가 없습니다.');
+  const { data, error } = await supabase.rpc('toggle_dating_completion', {
+    p_match_id: matchId,
+    p_user_id: userId,
+  });
+  if (error) throw new Error(`과팅 종료 처리 오류: ${error.message}`);
+  return data as { completed: boolean; count: number };
 }
 
 export async function getStats(): Promise<Stats> {
@@ -395,6 +466,8 @@ export async function getStats(): Promise<Stats> {
       { count: femaleWaiting },
       { count: todayMatches },
     ] = await Promise.all([
+      // NOTE: 오늘 생성된 팀 중 현재 applied 상태인 팀 수.
+      // 정확한 "오늘 신청 수"를 위해서는 teams 테이블에 applied_at 컬럼이 필요합니다.
       supabase.from('teams').select('*', { count: 'exact', head: true }).eq('status', 'applied').gte('created_at', todayIso),
       supabase.from('teams').select('*', { count: 'exact', head: true }).eq('gender', '남성').eq('status', 'applied'),
       supabase.from('teams').select('*', { count: 'exact', head: true }).eq('gender', '여성').eq('status', 'applied'),
@@ -456,7 +529,7 @@ export async function getChats(): Promise<ChatList> {
         ? supabase.from('users').select('id, name').in('id', leaderIds)
         : Promise.resolve({ data: [] }),
       supabase.from('messages').select('match_id, content, created_at, read_by, sender_id')
-        .in('match_id', matchIds).order('created_at', { ascending: false }),
+        .in('match_id', matchIds).order('created_at', { ascending: false }).limit(300),
     ]);
 
     const leaderUsers = leaderUsersResult.data;
@@ -636,7 +709,7 @@ export async function sendMessage(chatId: string | number, data: Omit<Message, '
   if (error) throw new Error(`메시지 전송 오류: ${error.message}`);
 
   return {
-    id: Date.now(),
+    id: Date.now() * 1000 + Math.floor(Math.random() * 1000),
     dbId: String(inserted.id),
     text: inserted.content,
     sender: 'me',
@@ -715,21 +788,31 @@ export async function leaveTeam(): Promise<{ ok: boolean }> {
   const { data: myTeam } = await supabase.from('teams').select('id').eq('leader_id', userId).maybeSingle();
 
   if (myTeam) {
+    const teamId = myTeam.id;
     const { data: nextMember } = await supabase
-      .from('team_members').select('user_id').eq('team_id', myTeam.id).neq('user_id', userId).limit(1).maybeSingle();
+      .from('team_members').select('user_id').eq('team_id', teamId).neq('user_id', userId).limit(1).maybeSingle();
 
     if (nextMember) {
-      await supabase.from('teams').update({ leader_id: nextMember.user_id }).eq('id', myTeam.id);
-      await supabase.from('team_members').update({ role: 'leader' }).eq('team_id', myTeam.id).eq('user_id', nextMember.user_id);
+      await supabase.from('teams').update({ leader_id: nextMember.user_id }).eq('id', teamId);
+      await supabase.from('team_members').update({ role: 'leader' }).eq('team_id', teamId).eq('user_id', nextMember.user_id);
+      // team_id 범위로 한정하여 기존 팀장 삭제
+      const { error } = await supabase.from('team_members').delete().eq('user_id', userId).eq('team_id', teamId);
+      if (error) throw new Error(`팀 나가기 오류: ${error.message}`);
     } else {
-      await supabase.from('team_members').delete().eq('team_id', myTeam.id);
-      const { error } = await supabase.from('teams').delete().eq('id', myTeam.id);
+      await supabase.from('team_members').delete().eq('team_id', teamId);
+      const { error } = await supabase.from('teams').delete().eq('id', teamId);
       if (error) throw new Error(`팀 해체 오류: ${error.message}`);
-      return { ok: true };
     }
+    return { ok: true };
   }
 
-  const { error } = await supabase.from('team_members').delete().eq('user_id', userId);
+  // 팀원인 경우 — team_id를 먼저 조회하여 범위 한정 삭제
+  const { data: memberRow } = await supabase
+    .from('team_members').select('team_id').eq('user_id', userId).maybeSingle();
+
+  if (!memberRow) return { ok: true };
+
+  const { error } = await supabase.from('team_members').delete().eq('user_id', userId).eq('team_id', memberRow.team_id);
   if (error) throw new Error(`팀 나가기 오류: ${error.message}`);
   return { ok: true };
 }
@@ -740,7 +823,7 @@ export async function getInviteInfo(): Promise<{ link: string; code: string } | 
 
   const { data } = await supabase.from('teams').select('invite_code').eq('id', team.id).maybeSingle();
   const code = data?.invite_code ?? '';
-  return { link: `indeed://invite?code=${code}`, code };
+  return { link: `indeed://join-team?code=${code}`, code };
 }
 
 export async function getTeamByInviteCode(code: string): Promise<Team | null> {
@@ -750,6 +833,117 @@ export async function getTeamByInviteCode(code: string): Promise<Team | null> {
     return mapTeamRow(data);
   } catch {
     return null;
+  }
+}
+
+// ── 신고 기능 ──────────────────────────────────────────────────────────────────
+
+export async function submitReport(matchId: string | number, content: string): Promise<void> {
+  const userId = await getCurrentUserId();
+  if (!userId) throw new Error('인증 정보가 없습니다.');
+  const { error } = await supabase.from('reports').insert({
+    reporter_id: userId,
+    match_id: String(matchId),
+    content,
+    status: 'pending',
+  });
+  if (error) throw new Error(error.message);
+}
+
+// ── 관리자 기능 ────────────────────────────────────────────────────────────────
+
+export interface PendingUser {
+  id: string;
+  name: string;
+  email: string;
+  department: string;
+  studentCardUrl: string;
+  createdAt: string;
+}
+
+export async function getPendingVerifications(): Promise<PendingUser[]> {
+  const { data, error } = await supabase
+    .from('users')
+    .select('id, name, email, department, student_card_url, created_at')
+    .eq('verified_status', 'pending')
+    .not('student_card_url', 'is', null)
+    .order('created_at', { ascending: true });
+  if (error) throw new Error(error.message);
+  return (data ?? []).map(u => ({
+    id: String(u.id),
+    name: u.name ?? '',
+    email: u.email ?? '',
+    department: u.department ?? '',
+    studentCardUrl: u.student_card_url ?? '',
+    createdAt: u.created_at ?? '',
+  }));
+}
+
+export async function getStudentCardUrl(path: string): Promise<string> {
+  const { data, error } = await supabase.storage
+    .from('student-cards').createSignedUrl(path, 3600);
+  if (error) throw new Error(error.message);
+  return data.signedUrl;
+}
+
+export async function approveUser(userId: string): Promise<void> {
+  const { error } = await supabase
+    .from('users')
+    .update({ verified: true, verified_status: 'approved' })
+    .eq('id', userId);
+  if (error) throw new Error(error.message);
+}
+
+export async function rejectUser(userId: string, reason: string): Promise<void> {
+  const { error } = await supabase
+    .from('users')
+    .update({ verified: false, verified_status: 'rejected', rejection_reason: reason })
+    .eq('id', userId);
+  if (error) throw new Error(error.message);
+}
+
+export interface AdminReport {
+  id: string;
+  reporterId: string;
+  targetId: string | null;
+  matchId: string | null;
+  content: string;
+  status: string;
+  adminNote: string | null;
+  createdAt: string;
+}
+
+export async function getAdminReports(): Promise<AdminReport[]> {
+  const { data, error } = await supabase
+    .from('reports')
+    .select('*')
+    .order('created_at', { ascending: false });
+  if (error) throw new Error(error.message);
+  return (data ?? []).map(r => ({
+    id: String(r.id),
+    reporterId: String(r.reporter_id),
+    targetId: r.target_id ? String(r.target_id) : null,
+    matchId: r.match_id ? String(r.match_id) : null,
+    content: r.content ?? '',
+    status: r.status ?? 'pending',
+    adminNote: r.admin_note ?? null,
+    createdAt: r.created_at ?? '',
+  }));
+}
+
+export async function resolveReport(
+  reportId: string,
+  adminNote: string,
+  penalty?: { userId: string; level: number; reason: string },
+): Promise<void> {
+  const { error } = await supabase
+    .from('reports').update({ status: 'resolved', admin_note: adminNote }).eq('id', reportId);
+  if (error) throw new Error(error.message);
+  if (penalty) {
+    const { error: pe } = await supabase.from('penalties').insert({
+      user_id: penalty.userId, level: penalty.level, reason: penalty.reason,
+    });
+    if (pe) throw new Error(pe.message);
   }
 }
 

@@ -1,13 +1,14 @@
 import { useState } from 'react';
 import { View, Text, StyleSheet, TouchableOpacity, TextInput, ActivityIndicator, Alert } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { router } from 'expo-router';
+import { router, useLocalSearchParams } from 'expo-router';
 import { Feather } from '@expo/vector-icons';
 import { joinTeamByInviteCode } from '../services/api';
 import { useTeam } from '../hooks/useData';
 
 export default function JoinTeamPage() {
-  const [code, setCode] = useState('');
+  const params = useLocalSearchParams<{ code?: string }>();
+  const [code, setCode] = useState((params.code ?? '').toUpperCase());
   const [loading, setLoading] = useState(false);
   const { reload } = useTeam();
   const insets = useSafeAreaInsets();

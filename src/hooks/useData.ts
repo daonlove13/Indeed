@@ -5,10 +5,12 @@ import type {
   UserProfile, Team, Stats, Restaurant, ChatList, Message, HistoryItem, Notification,
 } from '../services/api';
 
-const cache = new Map<string, unknown>();
+const cache = new Map<string, { data: unknown; ts: number }>();
+const CACHE_TTL = 30_000;
 
 function useFetch<T>(fetcher: () => Promise<T>, deps: unknown[] = [], cacheKey?: string) {
-  const cached = cacheKey ? (cache.get(cacheKey) as T | undefined) : undefined;
+  const entry = cacheKey ? cache.get(cacheKey) : undefined;
+  const cached = (entry && Date.now() - entry.ts < CACHE_TTL) ? (entry.data as T) : undefined;
   const [data, setData] = useState<T | null>(cached ?? null);
   const [loading, setLoading] = useState(!cached);
   const [error, setError] = useState<string | null>(null);
@@ -20,7 +22,7 @@ function useFetch<T>(fetcher: () => Promise<T>, deps: unknown[] = [], cacheKey?:
     try {
       const result = await fetcher();
       setData(result);
-      if (cacheKey) cache.set(cacheKey, result);
+      if (cacheKey) cache.set(cacheKey, { data: result, ts: Date.now() });
     } catch (e) {
       setError(String(e));
     } finally {
@@ -55,9 +57,19 @@ export function useTeam(onMatchDetected?: (teamId: string) => void) {
   // 훅 인스턴스마다 고유 ID — 동일 채널명 충돌 방지
   const instanceId = useRef(Math.random().toString(36).slice(2)).current;
 
+  // 클라이언트 사이드 팀 필터 — 내 팀과 무관한 변경 무시
+  const teamIdRef = useRef<string | undefined>(data?.id);
+  useEffect(() => { teamIdRef.current = data?.id; }, [data?.id]);
+
   useEffect(() => {
     const ch = supabase.channel(`team_members_changes_${instanceId}`)
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'team_members' }, () => reloadRef.current())
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'team_members' },
+        (payload) => {
+          const newRow = payload.new as { team_id?: string } | null;
+          const teamId = teamIdRef.current;
+          if (teamId && newRow && newRow.team_id && newRow.team_id !== teamId) return;
+          reloadRef.current();
+        })
       .subscribe();
     return () => { supabase.removeChannel(ch); };
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
@@ -132,7 +144,8 @@ export function useRestaurants() {
 }
 
 export function useChats() {
-  const { data, loading, error, reload, setData } = useFetch<ChatList>(api.getChats, []);
+  // cacheKey 추가 — 탭 전환 시 캐시에서 즉시 렌더링
+  const { data, loading, error, reload, setData } = useFetch<ChatList>(api.getChats, [], 'chats');
   const reloadRef = useRef(reload);
   useEffect(() => { reloadRef.current = reload; }, [reload]);
   const setDataRef = useRef(setData);

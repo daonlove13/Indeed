@@ -30,6 +30,14 @@
       "expo-dev-client",
       "expo-image-picker",
       [
+        "expo-notifications",
+        {
+          "icon": "./assets/images/icon.png",
+          "color": "#000000",
+          "sounds": []
+        }
+      ],
+      [
         "expo-splash-screen",
         {
           "backgroundColor": "#000000",
@@ -48,6 +56,12 @@
         "projectId": "4ca294a5-b95c-4c89-86de-5473ea252567"
       }
     },
-    "owner": "judason"
+    "owner": "judason",
+    "runtimeVersion": {
+      "policy": "appVersion"
+    },
+    "updates": {
+      "url": "https://u.expo.dev/4ca294a5-b95c-4c89-86de-5473ea252567"
+    }
   }
 }

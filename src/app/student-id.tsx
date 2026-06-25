@@ -26,38 +26,52 @@ export default function StudentIdPage({ defaultState = 'idle' }: Props) {
     });
   }, []);
 
-  const handlePickImage = async () => {
-    const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
-    if (status !== 'granted') {
-      Alert.alert('권한 필요', '사진 접근 권한이 필요합니다.');
-      return;
-    }
-
-    const result = await ImagePicker.launchImageLibraryAsync({
-      mediaTypes: ImagePicker.MediaTypeOptions.Images,
-      quality: 0.8,
-    });
-
-    if (result.canceled || !result.assets[0]) return;
-
-    const asset = result.assets[0];
-    if (asset.fileSize && asset.fileSize > 10 * 1024 * 1024) {
-      setErrorMsg('파일 크기는 10MB 이하여야 해요.');
-      setState('error');
-      return;
-    }
-
+  const handleUpload = async (uri: string, mimeType: string) => {
     setState('uploading');
     setErrorMsg('');
     try {
-      const mimeType = asset.mimeType ?? 'image/jpeg';
-      await uploadStudentCard(asset.uri, mimeType);
+      await uploadStudentCard(uri, mimeType);
       setState('uploaded');
       setTimeout(() => setState('pending'), 800);
     } catch (e) {
       setErrorMsg(String(e));
       setState('error');
     }
+  };
+
+  const handlePickImage = async () => {
+    const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
+    if (status !== 'granted') {
+      Alert.alert('권한 필요', '사진 접근 권한이 필요합니다.');
+      return;
+    }
+    const result = await ImagePicker.launchImageLibraryAsync({
+      mediaTypes: ImagePicker.MediaTypeOptions.Images,
+      quality: 0.8,
+    });
+    if (result.canceled || !result.assets[0]) return;
+    const asset = result.assets[0];
+    if (asset.fileSize && asset.fileSize > 10 * 1024 * 1024) {
+      setErrorMsg('파일 크기는 10MB 이하여야 해요.');
+      setState('error');
+      return;
+    }
+    await handleUpload(asset.uri, asset.mimeType ?? 'image/jpeg');
+  };
+
+  const handleTakePhoto = async () => {
+    const { status } = await ImagePicker.requestCameraPermissionsAsync();
+    if (status !== 'granted') {
+      Alert.alert('권한 필요', '카메라 접근 권한이 필요합니다.');
+      return;
+    }
+    const result = await ImagePicker.launchCameraAsync({
+      mediaTypes: ImagePicker.MediaTypeOptions.Images,
+      quality: 0.8,
+    });
+    if (result.canceled || !result.assets[0]) return;
+    const asset = result.assets[0];
+    await handleUpload(asset.uri, asset.mimeType ?? 'image/jpeg');
   };
 
   const isPendingState = state === 'pending';
@@ -95,6 +109,7 @@ export default function StudentIdPage({ defaultState = 'idle' }: Props) {
             onPress={state !== 'uploading' ? handlePickImage : undefined}
             activeOpacity={0.9}
           >
+
             {state === 'uploading' && (
               <>
                 <ActivityIndicator size="large" color="#000" />
@@ -134,23 +149,30 @@ export default function StudentIdPage({ defaultState = 'idle' }: Props) {
             </Text>
           </View>
 
-          <TouchableOpacity
-            style={[styles.ctaBtn, state === 'uploading' && styles.ctaBtnDisabled]}
-            onPress={state !== 'uploading' ? handlePickImage : undefined}
-            disabled={state === 'uploading'}
-          >
-            {state === 'uploading' ? (
-              <>
+          <View style={styles.btnRow}>
+            <TouchableOpacity
+              style={[styles.ctaBtn, styles.ctaBtnHalf, state === 'uploading' && styles.ctaBtnDisabled]}
+              onPress={state !== 'uploading' ? handleTakePhoto : undefined}
+              disabled={state === 'uploading'}
+            >
+              <Feather name="camera" size={16} color="#fff" />
+              <Text style={styles.ctaBtnText}>카메라로 찍기</Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={[styles.ctaBtn, styles.ctaBtnHalf, state === 'uploading' && styles.ctaBtnDisabled]}
+              onPress={state !== 'uploading' ? handlePickImage : undefined}
+              disabled={state === 'uploading'}
+            >
+              {state === 'uploading' ? (
                 <ActivityIndicator size="small" color="#99a1af" />
-                <Text style={styles.ctaBtnTextDisabled}>업로드 중...</Text>
-              </>
-            ) : (
-              <>
-                <Feather name="upload" size={16} color="#fff" />
-                <Text style={styles.ctaBtnText}>갤러리에서 선택</Text>
-              </>
-            )}
-          </TouchableOpacity>
+              ) : (
+                <Feather name="image" size={16} color="#fff" />
+              )}
+              <Text style={state === 'uploading' ? styles.ctaBtnTextDisabled : styles.ctaBtnText}>
+                {state === 'uploading' ? '업로드 중...' : '갤러리에서 선택'}
+              </Text>
+            </TouchableOpacity>
+          </View>
         </ScrollView>
       ) : (
         <ScrollView style={styles.scroll} showsVerticalScrollIndicator={false}>
@@ -306,6 +328,7 @@ const styles = StyleSheet.create({
     color: '#6a7282',
     lineHeight: 20,
   },
+  btnRow: { flexDirection: 'row', gap: 10 },
   ctaBtn: {
     backgroundColor: '#000',
     borderRadius: 14,
@@ -315,6 +338,7 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     gap: 8,
   },
+  ctaBtnHalf: { flex: 1 },
   ctaBtnDisabled: {
     backgroundColor: '#e5e7eb',
   },

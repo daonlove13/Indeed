@@ -19,6 +19,7 @@
   ],
   "exclude": [
     "node_modules",
-    "App1-extracted"
+    "App1-extracted",
+    "supabase"
   ]
 }

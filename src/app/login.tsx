@@ -47,50 +47,42 @@ async function navigateByUser(userId: string) {
   }
 }
 
-function parseTokensFromUrl(url: string) {
-  const hash = url.split('#')[1] ?? '';
-  if (hash) {
-    const params = new URLSearchParams(hash);
-    const accessToken = params.get('access_token');
-    const refreshToken = params.get('refresh_token');
-    if (accessToken && refreshToken) return { accessToken, refreshToken };
-  }
-  const query = url.split('?')[1]?.split('#')[0] ?? '';
-  const params = new URLSearchParams(query);
-  return {
-    accessToken: params.get('access_token'),
-    refreshToken: params.get('refresh_token'),
-  };
-}
-
 export default function LoginScreen() {
   const [loading, setLoading] = useState<'google' | 'kakao' | null>(null);
   const [errorMsg, setErrorMsg] = useState('');
   const appState = useRef(AppState.currentState);
+  const oauthProcessed = useRef(false);
   const insets = useSafeAreaInsets();
 
   const handleOAuthUrl = async (url: string) => {
-    if (!url) return;
-    if (!url.includes('access_token=') && !url.includes('refresh_token=') && !url.includes('code=')) return;
+    if (!url || oauthProcessed.current) return;
+    if (!url.startsWith('indeed://')) return;
 
-    const tokens = parseTokensFromUrl(url);
-    if (tokens.accessToken && tokens.refreshToken) {
-      const { data, error } = await supabase.auth.setSession({
-        access_token: tokens.accessToken,
-        refresh_token: tokens.refreshToken,
-      });
-      if (!error && data.session) {
-        await navigateByUser(data.session.user.id);
-        return;
-      }
+    let code: string | null = null;
+    try {
+      code = new URL(url).searchParams.get('code');
+    } catch {
+      return;
     }
 
+    if (!code) return;
+
+    oauthProcessed.current = true;
+
     try {
-      const { data, error } = await supabase.auth.exchangeCodeForSession(url);
-      if (!error && data.session) {
+      const { data, error } = await supabase.auth.exchangeCodeForSession(code);
+      if (error) {
+        setErrorMsg(`로그인 오류: ${error.message}`);
+        oauthProcessed.current = false;
+        return;
+      }
+      if (data.session) {
         await navigateByUser(data.session.user.id);
       }
-    } catch {}
+    } catch (e) {
+      setErrorMsg(e instanceof Error ? e.message : String(e));
+      oauthProcessed.current = false;
+    }
   };
 
   useEffect(() => {
@@ -115,39 +107,55 @@ export default function LoginScreen() {
       appSub.remove();
       subscription.unsubscribe();
     };
-  }, []);
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   const handleOAuth = async (provider: 'google' | 'kakao') => {
     setLoading(provider);
     setErrorMsg('');
-    try {
-      const redirectTo = Linking.createURL('/');
+    oauthProcessed.current = false;
 
+    try {
+      const redirectTo = Linking.createURL('/login');
+
+      // skipBrowserRedirect: true → supabase-js가 PKCE verifier를 직접 저장하고
+      // URL만 반환. exchangeCodeForSession에서 동일한 경로로 verifier를 읽으므로
+      // "PKCE code verifier not found" 에러가 사라짐.
       const { data, error } = await supabase.auth.signInWithOAuth({
         provider,
         options: {
           redirectTo,
           skipBrowserRedirect: true,
-          queryParams: provider === 'google' ? { prompt: 'select_account' } : undefined,
+          ...(provider === 'google' && { queryParams: { prompt: 'select_account' } }),
         },
       });
 
-      if (error) throw error;
-      if (!data.url) throw new Error('OAuth URL을 받지 못했어요');
+      if (error || !data.url) {
+        setErrorMsg(error?.message ?? '로그인 URL을 가져오지 못했어요.');
+        return;
+      }
 
       const result = await WebBrowser.openAuthSessionAsync(data.url, redirectTo);
 
       if (result.type === 'success' && result.url) {
         await handleOAuthUrl(result.url);
       } else if (result.type === 'cancel' || result.type === 'dismiss') {
-        await new Promise(r => setTimeout(r, 600));
-        const { data: { session } } = await supabase.auth.getSession();
-        if (session) { await navigateByUser(session.user.id); return; }
-        setErrorMsg('로그인이 취소됐어요.');
+        // Android Chrome Custom Tab은 성공 후에도 dismiss를 반환하는 경우가 있음.
+        // Linking 이벤트로 이미 처리됐을 수 있으니 세션을 확인.
+        setLoading(provider);
+        let session = null;
+        for (let i = 0; i < 10; i++) {
+          await new Promise(r => setTimeout(r, 500));
+          const { data: sessionData } = await supabase.auth.getSession();
+          if (sessionData.session) { session = sessionData.session; break; }
+        }
+        if (session) {
+          await navigateByUser(session.user.id);
+        } else if (result.type === 'cancel') {
+          setErrorMsg('로그인이 취소됐어요.');
+        }
       }
     } catch (e: unknown) {
-      const errMsg = e instanceof Error ? e.message : String(e);
-      setErrorMsg(errMsg);
+      setErrorMsg(e instanceof Error ? e.message : String(e));
     } finally {
       setLoading(null);
     }
