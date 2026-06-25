@@ -26,11 +26,11 @@ export default function StudentIdPage({ defaultState = 'idle' }: Props) {
     });
   }, []);
 
-  const handleUpload = async (uri: string, mimeType: string) => {
+  const handleUpload = async (base64: string, mimeType: string) => {
     setState('uploading');
     setErrorMsg('');
     try {
-      await uploadStudentCard(uri, mimeType);
+      await uploadStudentCard(base64, mimeType);
       setState('uploaded');
       setTimeout(() => setState('pending'), 800);
     } catch (e) {
@@ -48,15 +48,21 @@ export default function StudentIdPage({ defaultState = 'idle' }: Props) {
     const result = await ImagePicker.launchImageLibraryAsync({
       mediaTypes: ImagePicker.MediaTypeOptions.Images,
       quality: 0.8,
+      base64: true,
     });
     if (result.canceled || !result.assets[0]) return;
     const asset = result.assets[0];
+    if (!asset.base64) {
+      setErrorMsg('이미지를 읽지 못했어요. 다시 시도해주세요.');
+      setState('error');
+      return;
+    }
     if (asset.fileSize && asset.fileSize > 10 * 1024 * 1024) {
       setErrorMsg('파일 크기는 10MB 이하여야 해요.');
       setState('error');
       return;
     }
-    await handleUpload(asset.uri, asset.mimeType ?? 'image/jpeg');
+    await handleUpload(asset.base64, asset.mimeType ?? 'image/jpeg');
   };
 
   const handleTakePhoto = async () => {
@@ -68,10 +74,16 @@ export default function StudentIdPage({ defaultState = 'idle' }: Props) {
     const result = await ImagePicker.launchCameraAsync({
       mediaTypes: ImagePicker.MediaTypeOptions.Images,
       quality: 0.8,
+      base64: true,
     });
     if (result.canceled || !result.assets[0]) return;
     const asset = result.assets[0];
-    await handleUpload(asset.uri, asset.mimeType ?? 'image/jpeg');
+    if (!asset.base64) {
+      setErrorMsg('이미지를 읽지 못했어요. 다시 시도해주세요.');
+      setState('error');
+      return;
+    }
+    await handleUpload(asset.base64, asset.mimeType ?? 'image/jpeg');
   };
 
   const isPendingState = state === 'pending';

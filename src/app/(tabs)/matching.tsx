@@ -45,7 +45,9 @@ export default function MatchingScreen() {
     try {
       await toggleApply();
       await reloadTeam();
-    } catch {}
+    } catch {
+      Alert.alert('오류', '신청 취소에 실패했어요. 다시 시도해주세요.');
+    }
   };
 
   const handleLeaveTeam = () => {
@@ -54,7 +56,12 @@ export default function MatchingScreen() {
       {
         text: '나가기', style: 'destructive',
         onPress: async () => {
-          try { await leaveTeam(); await reloadTeam(); } catch {}
+          try {
+            await leaveTeam();
+            await reloadTeam();
+          } catch {
+            Alert.alert('오류', '팀 나가기에 실패했어요. 다시 시도해주세요.');
+          }
         },
       },
     ]);

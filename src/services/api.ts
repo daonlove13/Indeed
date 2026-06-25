@@ -211,19 +211,22 @@ export async function updateProfile(data: Partial<UserProfile>): Promise<UserPro
   return getProfile();
 }
 
-export async function uploadStudentCard(uri: string, mimeType: string = 'image/jpeg'): Promise<string> {
+export async function uploadStudentCard(base64: string, mimeType: string = 'image/jpeg'): Promise<string> {
   const userId = await getCurrentUserId();
   if (!userId) throw new Error('인증 정보가 없습니다. 다시 로그인해주세요.');
 
   const ext = mimeType.split('/')[1] ?? 'jpg';
   const path = `${userId}/student-card.${ext}`;
 
-  const response = await fetch(uri);
-  const blob = await response.blob();
+  // fetch(uri).blob()은 Android content:// URI에서 "Network request failed" 발생.
+  // ImagePicker의 base64 옵션으로 받아서 Uint8Array로 변환해 업로드.
+  const binary = atob(base64);
+  const bytes = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
 
   const { error: uploadError } = await supabase.storage
     .from('student-cards')
-    .upload(path, blob, { upsert: true, contentType: mimeType });
+    .upload(path, bytes, { upsert: true, contentType: mimeType });
 
   if (uploadError) throw new Error(`학생증 업로드 오류: ${uploadError.message}`);
 
@@ -329,7 +332,10 @@ export async function createTeam(payload: Omit<Team, 'id' | 'createdAt'>): Promi
   const { data: userData } = await supabase
     .from('users').select('department, name').eq('id', userId).maybeSingle();
 
-  const randomCode = Math.random().toString(36).substring(2, 8).toUpperCase();
+  const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
+  const buf = new Uint8Array(6);
+  crypto.getRandomValues(buf);
+  const randomCode = Array.from(buf).map(b => chars[b % chars.length]).join('');
 
   const insertData: Record<string, unknown> = {
     leader_id: userId,

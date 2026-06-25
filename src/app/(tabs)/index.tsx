@@ -165,7 +165,11 @@ export default function HomeScreen() {
       {
         text: '해체', style: 'destructive',
         onPress: async () => {
-          try { await removeTeam(); } catch {}
+          try {
+            await removeTeam();
+          } catch {
+            Alert.alert('오류', '팀 해체에 실패했어요. 다시 시도해주세요.');
+          }
         },
       },
     ]);
@@ -177,7 +181,12 @@ export default function HomeScreen() {
       {
         text: '나가기', style: 'destructive',
         onPress: async () => {
-          try { await leaveTeam(); await reloadTeam(); } catch {}
+          try {
+            await leaveTeam();
+            await reloadTeam();
+          } catch {
+            Alert.alert('오류', '팀 나가기에 실패했어요. 다시 시도해주세요.');
+          }
         },
       },
     ]);
@@ -214,7 +223,10 @@ export default function HomeScreen() {
             team={team}
             isLeader={isLeader}
             onInviteTeam={() => router.push('/invite-link')}
-            onToggleApply={async () => { try { await toggleApply(); } catch {} }}
+            onToggleApply={async () => {
+              try { await toggleApply(); }
+              catch { Alert.alert('오류', '신청 상태 변경에 실패했어요. 다시 시도해주세요.'); }
+            }}
             onDeleteTeam={handleDeleteTeam}
             onLeaveTeam={handleLeaveTeam}
           />
