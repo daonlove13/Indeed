@@ -10,8 +10,9 @@ import { Feather } from '@expo/vector-icons';
 import { getStudentCardUrl, approveUser, rejectUser } from '../../services/api';
 
 export default function VerifyDetailScreen() {
-  const { userId, name, department, cardUrl } = useLocalSearchParams<{
+  const { userId, name, department, cardUrl, status, rejectionReason } = useLocalSearchParams<{
     userId: string; name: string; department: string; cardUrl: string;
+    status?: string; rejectionReason?: string;
   }>();
   const insets = useSafeAreaInsets();
   const [signedUrl, setSignedUrl] = useState<string | null>(null);
@@ -74,8 +75,32 @@ export default function VerifyDetailScreen() {
 
       <ScrollView contentContainerStyle={styles.scroll}>
         <View style={styles.infoBox}>
-          <Text style={styles.infoName}>{name}</Text>
+          <View style={styles.infoTopRow}>
+            <Text style={styles.infoName}>{name}</Text>
+            {status === 'approved' && (
+              <View style={[styles.statusBadge, { backgroundColor: '#d1fae5' }]}>
+                <Feather name="check" size={11} color="#10b981" />
+                <Text style={[styles.statusBadgeText, { color: '#10b981' }]}>승인</Text>
+              </View>
+            )}
+            {status === 'rejected' && (
+              <View style={[styles.statusBadge, { backgroundColor: '#fee2e2' }]}>
+                <Text style={[styles.statusBadgeText, { color: '#ef4444' }]}>반려</Text>
+              </View>
+            )}
+            {(!status || status === 'pending') && (
+              <View style={[styles.statusBadge, { backgroundColor: '#fef3c7' }]}>
+                <Text style={[styles.statusBadgeText, { color: '#d97706' }]}>대기</Text>
+              </View>
+            )}
+          </View>
           <Text style={styles.infoDept}>{department}</Text>
+          {status === 'rejected' && rejectionReason ? (
+            <View style={styles.rejectionBox}>
+              <Feather name="alert-circle" size={13} color="#ef4444" />
+              <Text style={styles.rejectionText}>반려 사유: {rejectionReason}</Text>
+            </View>
+          ) : null}
         </View>
 
         <View style={styles.imageWrapper}>
@@ -96,26 +121,49 @@ export default function VerifyDetailScreen() {
           ) : null}
         </View>
 
-        <View style={styles.btnRow}>
-          <TouchableOpacity
-            style={[styles.rejectBtn, submitting && styles.btnDisabled]}
-            onPress={() => setRejectModal(true)}
-            disabled={submitting}
-          >
-            <Text style={styles.rejectText}>거절</Text>
-          </TouchableOpacity>
-          <TouchableOpacity
-            style={[styles.approveBtn, submitting && styles.btnDisabled]}
-            onPress={handleApprove}
-            disabled={submitting}
-          >
-            {submitting ? (
-              <ActivityIndicator size="small" color="#fff" />
-            ) : (
-              <Text style={styles.approveText}>승인</Text>
-            )}
-          </TouchableOpacity>
-        </View>
+        {(!status || status === 'pending') ? (
+          <View style={styles.btnRow}>
+            <TouchableOpacity
+              style={[styles.rejectBtn, submitting && styles.btnDisabled]}
+              onPress={() => setRejectModal(true)}
+              disabled={submitting}
+            >
+              <Text style={styles.rejectText}>거절</Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={[styles.approveBtn, submitting && styles.btnDisabled]}
+              onPress={handleApprove}
+              disabled={submitting}
+            >
+              {submitting ? (
+                <ActivityIndicator size="small" color="#fff" />
+              ) : (
+                <Text style={styles.approveText}>승인</Text>
+              )}
+            </TouchableOpacity>
+          </View>
+        ) : (
+          <View style={styles.btnRow}>
+            <TouchableOpacity
+              style={[styles.rejectBtn, submitting && styles.btnDisabled]}
+              onPress={() => setRejectModal(true)}
+              disabled={submitting}
+            >
+              <Text style={styles.rejectText}>재반려</Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={[styles.approveBtn, submitting && styles.btnDisabled]}
+              onPress={handleApprove}
+              disabled={submitting}
+            >
+              {submitting ? (
+                <ActivityIndicator size="small" color="#fff" />
+              ) : (
+                <Text style={styles.approveText}>{status === 'approved' ? '재승인' : '승인'}</Text>
+              )}
+            </TouchableOpacity>
+          </View>
+        )}
       </ScrollView>
 
       <Modal visible={rejectModal} transparent animationType="slide" onRequestClose={() => setRejectModal(false)}>
@@ -164,7 +212,18 @@ const styles = StyleSheet.create({
   infoBox: {
     backgroundColor: '#f9fafb', borderRadius: 16, padding: 16, gap: 4,
   },
-  infoName: { fontSize: 18, fontWeight: '700', color: '#0a0a0a' },
+  infoTopRow: { flexDirection: 'row', alignItems: 'center', gap: 8 },
+  infoName: { fontSize: 18, fontWeight: '700', color: '#0a0a0a', flex: 1 },
+  statusBadge: {
+    flexDirection: 'row', alignItems: 'center', gap: 3,
+    borderRadius: 100, paddingHorizontal: 8, paddingVertical: 3,
+  },
+  statusBadgeText: { fontSize: 11, fontWeight: '700' },
+  rejectionBox: {
+    flexDirection: 'row', alignItems: 'flex-start', gap: 6,
+    marginTop: 6, backgroundColor: '#fef2f2', borderRadius: 10, padding: 10,
+  },
+  rejectionText: { fontSize: 13, color: '#ef4444', flex: 1, lineHeight: 18 },
   infoDept: { fontSize: 14, color: '#6a7282' },
   imageWrapper: {
     width: '100%', minHeight: 300, backgroundColor: '#f3f4f6',

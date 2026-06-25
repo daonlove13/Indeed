@@ -337,13 +337,8 @@ export async function createTeam(payload: Omit<Team, 'id' | 'createdAt'>): Promi
     .from('users').select('department, name').eq('id', userId).maybeSingle();
 
   const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
-  const buf = new Uint8Array(6);
-  try {
-    crypto.getRandomValues(buf);
-  } catch {
-    for (let i = 0; i < 6; i++) buf[i] = Math.floor(Math.random() * 256);
-  }
-  const randomCode = Array.from(buf).map(b => chars[b % chars.length]).join('');
+  let randomCode = '';
+  for (let i = 0; i < 6; i++) randomCode += chars[Math.floor(Math.random() * chars.length)];
 
   const insertData: Record<string, unknown> = {
     leader_id: userId,
@@ -875,6 +870,7 @@ export interface PendingUser {
   createdAt: string;
   status: 'pending' | 'approved' | 'rejected';
   cardSubmittedAt?: string;
+  rejectionReason?: string;
 }
 
 export async function getPendingVerifications(): Promise<PendingUser[]> {
@@ -904,7 +900,7 @@ export async function getApprovedVerifications(): Promise<PendingUser[]> {
     .eq('verified_status', 'approved')
     .not('student_card_url', 'is', null)
     .order('card_submitted_at', { ascending: false })
-    .limit(30);
+    .limit(50);
   if (error) throw new Error(error.message);
   return (data ?? []).map(u => ({
     id: String(u.id),
@@ -915,6 +911,28 @@ export async function getApprovedVerifications(): Promise<PendingUser[]> {
     createdAt: u.created_at ?? '',
     status: 'approved' as const,
     cardSubmittedAt: u.card_submitted_at ?? undefined,
+  }));
+}
+
+export async function getRejectedVerifications(): Promise<PendingUser[]> {
+  const { data, error } = await supabase
+    .from('users')
+    .select('id, name, email, department, student_card_url, created_at, card_submitted_at, rejection_reason')
+    .eq('verified_status', 'rejected')
+    .not('student_card_url', 'is', null)
+    .order('card_submitted_at', { ascending: false })
+    .limit(50);
+  if (error) throw new Error(error.message);
+  return (data ?? []).map(u => ({
+    id: String(u.id),
+    name: u.name ?? '',
+    email: u.email ?? '',
+    department: u.department ?? '',
+    studentCardUrl: u.student_card_url ?? '',
+    createdAt: u.created_at ?? '',
+    status: 'rejected' as const,
+    cardSubmittedAt: u.card_submitted_at ?? undefined,
+    rejectionReason: u.rejection_reason ?? undefined,
   }));
 }
 

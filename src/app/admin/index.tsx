@@ -7,34 +7,49 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
 import { Feather } from '@expo/vector-icons';
 import {
-  getPendingVerifications, getApprovedVerifications, getAdminReports, resolveReport,
+  getPendingVerifications, getApprovedVerifications, getRejectedVerifications,
+  getAdminReports, resolveReport,
 } from '../../services/api';
 import type { PendingUser, AdminReport } from '../../services/api';
 
 type Tab = 'verify' | 'reports';
 
-function formatSubmittedAt(iso?: string): string {
+function relativeTime(iso?: string): string {
   if (!iso) return '';
   try {
     const utc = iso.endsWith('Z') || iso.includes('+') ? iso : iso + 'Z';
-    const d = new Date(utc);
-    const now = new Date();
-    const diffMs = now.getTime() - d.getTime();
-    const diffH = Math.floor(diffMs / 3600000);
-    if (diffH < 1) return '방금 전';
-    if (diffH < 24) return `${diffH}시간 전`;
-    const diffD = Math.floor(diffH / 24);
-    if (diffD < 7) return `${diffD}일 전`;
-    return d.toLocaleDateString('ko-KR', { month: 'long', day: 'numeric' });
-  } catch {
-    return '';
-  }
+    const diffMs = Date.now() - new Date(utc).getTime();
+    const h = Math.floor(diffMs / 3600000);
+    if (h < 1) return '방금 전';
+    if (h < 24) return `${h}시간 전`;
+    const d = Math.floor(h / 24);
+    if (d < 7) return `${d}일 전`;
+    return new Date(utc).toLocaleDateString('ko-KR', { month: 'long', day: 'numeric' });
+  } catch { return ''; }
 }
 
-function isNewSubmission(iso?: string): boolean {
+function isNew(iso?: string): boolean {
   if (!iso) return false;
   const utc = iso.endsWith('Z') || iso.includes('+') ? iso : iso + 'Z';
   return Date.now() - new Date(utc).getTime() < 6 * 3600 * 1000;
+}
+
+function SectionHeader({ title, count, color }: { title: string; count: number; color: string }) {
+  return (
+    <View style={styles.sectionHeader}>
+      <View style={[styles.sectionDot, { backgroundColor: color }]} />
+      <Text style={styles.sectionTitle}>{title}</Text>
+      <Text style={styles.sectionCount}>{count}명</Text>
+    </View>
+  );
+}
+
+function EmptyRow({ text }: { text: string }) {
+  return (
+    <View style={styles.emptyRow}>
+      <Text style={styles.emptyText}>{text}</Text>
+    </View>
+  );
 }
 
 export default function AdminScreen() {
@@ -42,6 +57,7 @@ export default function AdminScreen() {
   const [tab, setTab] = useState<Tab>('verify');
   const [pending, setPending] = useState<PendingUser[]>([]);
   const [approved, setApproved] = useState<PendingUser[]>([]);
+  const [rejected, setRejected] = useState<PendingUser[]>([]);
   const [reports, setReports] = useState<AdminReport[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
@@ -51,14 +67,16 @@ export default function AdminScreen() {
 
   const load = useCallback(async () => {
     try {
-      const [p, a, r] = await Promise.all([
+      const [p, a, r, rpts] = await Promise.all([
         getPendingVerifications(),
         getApprovedVerifications(),
+        getRejectedVerifications(),
         getAdminReports(),
       ]);
       setPending(p);
       setApproved(a);
-      setReports(r);
+      setRejected(r);
+      setReports(rpts);
     } catch (e) {
       Alert.alert('오류', String(e));
     } finally {
@@ -68,7 +86,6 @@ export default function AdminScreen() {
   }, []);
 
   useEffect(() => { load(); }, [load]);
-
   const onRefresh = () => { setRefreshing(true); load(); };
 
   const handleResolve = async (withPenalty: boolean) => {
@@ -76,8 +93,7 @@ export default function AdminScreen() {
     setResolving(true);
     try {
       await resolveReport(
-        resolveModal.id,
-        adminNote,
+        resolveModal.id, adminNote,
         withPenalty && resolveModal.targetId
           ? { userId: resolveModal.targetId, level: 1, reason: adminNote }
           : undefined,
@@ -92,9 +108,7 @@ export default function AdminScreen() {
     }
   };
 
-  const unresolvedReports = reports.filter(r => r.status !== 'resolved').length;
-
-  const navigateToDetail = (item: PendingUser) => {
+  const goDetail = (item: PendingUser) => {
     router.push({
       pathname: '/admin/verify-detail' as never,
       params: {
@@ -102,9 +116,13 @@ export default function AdminScreen() {
         name: item.name,
         department: item.department,
         cardUrl: item.studentCardUrl,
+        status: item.status,
+        rejectionReason: item.rejectionReason ?? '',
       },
     });
   };
+
+  const unresolvedReports = reports.filter(r => r.status !== 'resolved').length;
 
   return (
     <View style={styles.container}>
@@ -117,18 +135,12 @@ export default function AdminScreen() {
       </View>
 
       <View style={styles.tabBar}>
-        <TouchableOpacity
-          style={[styles.tabBtn, tab === 'verify' && styles.tabBtnActive]}
-          onPress={() => setTab('verify')}
-        >
+        <TouchableOpacity style={[styles.tabBtn, tab === 'verify' && styles.tabBtnActive]} onPress={() => setTab('verify')}>
           <Text style={[styles.tabText, tab === 'verify' && styles.tabTextActive]}>
             학생증 심사 {pending.length > 0 && `(${pending.length})`}
           </Text>
         </TouchableOpacity>
-        <TouchableOpacity
-          style={[styles.tabBtn, tab === 'reports' && styles.tabBtnActive]}
-          onPress={() => setTab('reports')}
-        >
+        <TouchableOpacity style={[styles.tabBtn, tab === 'reports' && styles.tabBtnActive]} onPress={() => setTab('reports')}>
           <Text style={[styles.tabText, tab === 'reports' && styles.tabTextActive]}>
             신고 접수 {unresolvedReports > 0 && `(${unresolvedReports})`}
           </Text>
@@ -142,99 +154,100 @@ export default function AdminScreen() {
           contentContainerStyle={styles.scroll}
           refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} />}
         >
-          {/* 승인 대기 섹션 */}
-          <View style={styles.sectionHeader}>
-            <View style={styles.sectionDot} />
-            <Text style={styles.sectionTitle}>승인 대기</Text>
-            <Text style={styles.sectionCount}>{pending.length}명</Text>
-          </View>
-
-          {pending.length === 0 ? (
-            <View style={styles.emptyRow}>
-              <Text style={styles.emptyText}>대기 중인 심사가 없어요</Text>
-            </View>
-          ) : (
-            pending.map(item => (
-              <TouchableOpacity
-                key={item.id}
-                style={styles.card}
-                onPress={() => navigateToDetail(item)}
-              >
+          {/* ── 승인 대기 ── */}
+          <SectionHeader title="승인 대기" count={pending.length} color="#f59e0b" />
+          {pending.length === 0
+            ? <EmptyRow text="대기 중인 심사가 없어요" />
+            : pending.map(item => (
+              <TouchableOpacity key={item.id} style={styles.card} onPress={() => goDetail(item)}>
                 <View style={styles.cardAvatar}>
-                  <Text style={styles.cardAvatarText}>{item.name[0] ?? '?'}</Text>
+                  <Text style={styles.avatarText}>{item.name[0] ?? '?'}</Text>
                 </View>
                 <View style={styles.cardInfo}>
-                  <View style={styles.cardNameRow}>
+                  <View style={styles.nameRow}>
                     <Text style={styles.cardName}>{item.name}</Text>
-                    {isNewSubmission(item.cardSubmittedAt) && (
-                      <View style={styles.newBadge}>
-                        <Text style={styles.newBadgeText}>신규</Text>
+                    {isNew(item.cardSubmittedAt) && (
+                      <View style={[styles.badge, { backgroundColor: '#fef3c7' }]}>
+                        <Text style={[styles.badgeText, { color: '#d97706' }]}>신규</Text>
                       </View>
                     )}
                   </View>
                   <Text style={styles.cardSub}>
-                    {item.department}
-                    {item.cardSubmittedAt ? ` · ${formatSubmittedAt(item.cardSubmittedAt)}` : ''}
+                    {item.department}{item.cardSubmittedAt ? ` · ${relativeTime(item.cardSubmittedAt)}` : ''}
                   </Text>
                 </View>
                 <Feather name="chevron-right" size={18} color="#d1d5db" />
               </TouchableOpacity>
             ))
-          )}
+          }
 
-          {/* 승인 완료 섹션 */}
-          <View style={[styles.sectionHeader, { marginTop: 16 }]}>
-            <View style={[styles.sectionDot, styles.sectionDotApproved]} />
-            <Text style={styles.sectionTitle}>승인 완료</Text>
-            <Text style={styles.sectionCount}>{approved.length}명</Text>
+          {/* ── 승인 완료 ── */}
+          <View style={{ marginTop: 8 }}>
+            <SectionHeader title="승인 완료" count={approved.length} color="#10b981" />
+            {approved.length === 0
+              ? <EmptyRow text="승인 완료 내역이 없어요" />
+              : approved.map(item => (
+                <TouchableOpacity key={item.id} style={[styles.card, { backgroundColor: '#fafafa' }]} onPress={() => goDetail(item)}>
+                  <View style={[styles.cardAvatar, { backgroundColor: '#6b7280' }]}>
+                    <Text style={styles.avatarText}>{item.name[0] ?? '?'}</Text>
+                  </View>
+                  <View style={styles.cardInfo}>
+                    <View style={styles.nameRow}>
+                      <Text style={[styles.cardName, { color: '#374151' }]}>{item.name}</Text>
+                      <View style={[styles.badge, { backgroundColor: '#d1fae5', flexDirection: 'row', alignItems: 'center', gap: 2 }]}>
+                        <Feather name="check" size={10} color="#10b981" />
+                        <Text style={[styles.badgeText, { color: '#10b981' }]}>승인</Text>
+                      </View>
+                    </View>
+                    <Text style={styles.cardSub}>
+                      {item.department}{item.cardSubmittedAt ? ` · ${relativeTime(item.cardSubmittedAt)}` : ''}
+                    </Text>
+                  </View>
+                  <Feather name="chevron-right" size={18} color="#d1d5db" />
+                </TouchableOpacity>
+              ))
+            }
           </View>
 
-          {approved.length === 0 ? (
-            <View style={styles.emptyRow}>
-              <Text style={styles.emptyText}>최근 승인 내역이 없어요</Text>
-            </View>
-          ) : (
-            approved.map(item => (
-              <TouchableOpacity
-                key={item.id}
-                style={[styles.card, styles.cardApproved]}
-                onPress={() => navigateToDetail(item)}
-              >
-                <View style={[styles.cardAvatar, styles.cardAvatarApproved]}>
-                  <Text style={styles.cardAvatarText}>{item.name[0] ?? '?'}</Text>
-                </View>
-                <View style={styles.cardInfo}>
-                  <View style={styles.cardNameRow}>
-                    <Text style={[styles.cardName, { color: '#374151' }]}>{item.name}</Text>
-                    <View style={styles.approvedBadge}>
-                      <Feather name="check" size={10} color="#10b981" />
-                      <Text style={styles.approvedBadgeText}>승인</Text>
-                    </View>
+          {/* ── 반려 ── */}
+          <View style={{ marginTop: 8 }}>
+            <SectionHeader title="반려" count={rejected.length} color="#ef4444" />
+            {rejected.length === 0
+              ? <EmptyRow text="반려 내역이 없어요" />
+              : rejected.map(item => (
+                <TouchableOpacity key={item.id} style={[styles.card, { backgroundColor: '#fafafa' }]} onPress={() => goDetail(item)}>
+                  <View style={[styles.cardAvatar, { backgroundColor: '#ef4444' }]}>
+                    <Text style={styles.avatarText}>{item.name[0] ?? '?'}</Text>
                   </View>
-                  <Text style={styles.cardSub}>
-                    {item.department}
-                    {item.cardSubmittedAt ? ` · ${formatSubmittedAt(item.cardSubmittedAt)}` : ''}
-                  </Text>
-                </View>
-                <Feather name="chevron-right" size={18} color="#d1d5db" />
-              </TouchableOpacity>
-            ))
-          )}
+                  <View style={styles.cardInfo}>
+                    <View style={styles.nameRow}>
+                      <Text style={[styles.cardName, { color: '#374151' }]}>{item.name}</Text>
+                      <View style={[styles.badge, { backgroundColor: '#fee2e2' }]}>
+                        <Text style={[styles.badgeText, { color: '#ef4444' }]}>반려</Text>
+                      </View>
+                    </View>
+                    <Text style={styles.cardSub} numberOfLines={1}>
+                      {item.rejectionReason ? `사유: ${item.rejectionReason}` : item.department}
+                    </Text>
+                  </View>
+                  <Feather name="chevron-right" size={18} color="#d1d5db" />
+                </TouchableOpacity>
+              ))
+            }
+          </View>
 
-          <View style={{ height: 32 }} />
+          <View style={{ height: 40 }} />
         </ScrollView>
       ) : (
         <ScrollView
           contentContainerStyle={reports.length === 0 ? styles.center : styles.scroll}
           refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} />}
         >
-          {reports.length === 0 ? (
-            <Text style={styles.emptyText}>신고 내역이 없어요</Text>
-          ) : (
-            reports.map(item => (
+          {reports.length === 0
+            ? <Text style={styles.emptyText}>신고 내역이 없어요</Text>
+            : reports.map(item => (
               <TouchableOpacity
-                key={item.id}
-                style={styles.card}
+                key={item.id} style={styles.card}
                 onPress={() => { setResolveModal(item); setAdminNote(item.adminNote ?? ''); }}
               >
                 <View style={[styles.statusDot, item.status === 'resolved' ? styles.dotResolved : styles.dotPending]} />
@@ -247,8 +260,8 @@ export default function AdminScreen() {
                 <Feather name="chevron-right" size={18} color="#d1d5db" />
               </TouchableOpacity>
             ))
-          )}
-          <View style={{ height: 32 }} />
+          }
+          <View style={{ height: 40 }} />
         </ScrollView>
       )}
 
@@ -258,21 +271,17 @@ export default function AdminScreen() {
             <Text style={styles.modalTitle}>신고 처리</Text>
             <Text style={styles.modalContent}>{resolveModal?.content}</Text>
             <TextInput
-              style={styles.modalInput}
-              value={adminNote}
-              onChangeText={setAdminNote}
-              placeholder="관리자 메모 (선택)"
-              placeholderTextColor="#99a1af"
-              multiline
+              style={styles.modalInput} value={adminNote} onChangeText={setAdminNote}
+              placeholder="관리자 메모 (선택)" placeholderTextColor="#99a1af" multiline
             />
             <View style={styles.modalBtns}>
               <TouchableOpacity style={styles.modalCancelBtn} onPress={() => setResolveModal(null)}>
                 <Text style={styles.modalCancelText}>취소</Text>
               </TouchableOpacity>
-              <TouchableOpacity style={[styles.modalActionBtn, styles.btnWarn]} onPress={() => handleResolve(true)} disabled={resolving}>
+              <TouchableOpacity style={[styles.modalActionBtn, { backgroundColor: '#ef4444' }]} onPress={() => handleResolve(true)} disabled={resolving}>
                 {resolving ? <ActivityIndicator size="small" color="#fff" /> : <Text style={styles.modalActionText}>처리+패널티</Text>}
               </TouchableOpacity>
-              <TouchableOpacity style={[styles.modalActionBtn, styles.btnBlack]} onPress={() => handleResolve(false)} disabled={resolving}>
+              <TouchableOpacity style={[styles.modalActionBtn, { backgroundColor: '#000' }]} onPress={() => handleResolve(false)} disabled={resolving}>
                 {resolving ? <ActivityIndicator size="small" color="#fff" /> : <Text style={styles.modalActionText}>처리만</Text>}
               </TouchableOpacity>
             </View>
@@ -298,44 +307,32 @@ const styles = StyleSheet.create({
   tabText: { fontSize: 14, color: '#6a7282', fontWeight: '500' },
   tabTextActive: { color: '#000', fontWeight: '700' },
   center: { flex: 1, alignItems: 'center', justifyContent: 'center', minHeight: 200 },
-  scroll: { paddingVertical: 8 },
+  scroll: { paddingBottom: 8 },
   sectionHeader: {
     flexDirection: 'row', alignItems: 'center', gap: 8,
-    paddingHorizontal: 16, paddingVertical: 12,
-    backgroundColor: '#f9fafb',
+    paddingHorizontal: 16, paddingVertical: 10, backgroundColor: '#f9fafb',
   },
-  sectionDot: { width: 8, height: 8, borderRadius: 4, backgroundColor: '#f59e0b' },
-  sectionDotApproved: { backgroundColor: '#10b981' },
+  sectionDot: { width: 8, height: 8, borderRadius: 4 },
   sectionTitle: { fontSize: 13, fontWeight: '700', color: '#374151', flex: 1 },
   sectionCount: { fontSize: 12, color: '#6a7282' },
-  emptyRow: { paddingVertical: 20, paddingHorizontal: 16, alignItems: 'center' },
+  emptyRow: { paddingVertical: 18, alignItems: 'center' },
   emptyText: { fontSize: 14, color: '#99a1af' },
   card: {
-    flexDirection: 'row', alignItems: 'center', paddingHorizontal: 16,
-    paddingVertical: 14, borderBottomWidth: 1, borderBottomColor: '#f3f4f6', gap: 12,
+    flexDirection: 'row', alignItems: 'center',
+    paddingHorizontal: 16, paddingVertical: 14,
+    borderBottomWidth: 1, borderBottomColor: '#f3f4f6', gap: 12,
   },
-  cardApproved: { backgroundColor: '#fafafa' },
   cardAvatar: {
     width: 40, height: 40, backgroundColor: '#000', borderRadius: 20,
     alignItems: 'center', justifyContent: 'center',
   },
-  cardAvatarApproved: { backgroundColor: '#6b7280' },
-  cardAvatarText: { fontSize: 16, fontWeight: '700', color: '#fff' },
+  avatarText: { fontSize: 16, fontWeight: '700', color: '#fff' },
   cardInfo: { flex: 1 },
-  cardNameRow: { flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 2 },
+  nameRow: { flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 2 },
   cardName: { fontSize: 15, fontWeight: '600', color: '#0a0a0a' },
   cardSub: { fontSize: 12, color: '#6a7282' },
-  newBadge: {
-    backgroundColor: '#fef3c7', borderRadius: 100,
-    paddingHorizontal: 7, paddingVertical: 2,
-  },
-  newBadgeText: { fontSize: 10, fontWeight: '700', color: '#d97706' },
-  approvedBadge: {
-    flexDirection: 'row', alignItems: 'center', gap: 2,
-    backgroundColor: '#d1fae5', borderRadius: 100,
-    paddingHorizontal: 7, paddingVertical: 2,
-  },
-  approvedBadgeText: { fontSize: 10, fontWeight: '700', color: '#10b981' },
+  badge: { borderRadius: 100, paddingHorizontal: 7, paddingVertical: 2 },
+  badgeText: { fontSize: 10, fontWeight: '700' },
   statusDot: { width: 10, height: 10, borderRadius: 5 },
   dotPending: { backgroundColor: '#f59e0b' },
   dotResolved: { backgroundColor: '#10b981' },
@@ -352,6 +349,4 @@ const styles = StyleSheet.create({
   modalCancelText: { fontSize: 14, fontWeight: '600', color: '#6a7282' },
   modalActionBtn: { flex: 1, paddingVertical: 13, borderRadius: 12, alignItems: 'center' },
   modalActionText: { fontSize: 14, fontWeight: '600', color: '#fff' },
-  btnWarn: { backgroundColor: '#ef4444' },
-  btnBlack: { backgroundColor: '#000' },
 });
