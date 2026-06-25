@@ -1,22 +1,47 @@
 import { useState, useEffect, useCallback } from 'react';
 import {
-  View, Text, StyleSheet, TouchableOpacity, FlatList,
+  View, Text, StyleSheet, TouchableOpacity, ScrollView,
   ActivityIndicator, Alert, Modal, TextInput, RefreshControl,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
 import { Feather } from '@expo/vector-icons';
 import {
-  getPendingVerifications, getAdminReports, resolveReport,
+  getPendingVerifications, getApprovedVerifications, getAdminReports, resolveReport,
 } from '../../services/api';
 import type { PendingUser, AdminReport } from '../../services/api';
 
 type Tab = 'verify' | 'reports';
 
+function formatSubmittedAt(iso?: string): string {
+  if (!iso) return '';
+  try {
+    const utc = iso.endsWith('Z') || iso.includes('+') ? iso : iso + 'Z';
+    const d = new Date(utc);
+    const now = new Date();
+    const diffMs = now.getTime() - d.getTime();
+    const diffH = Math.floor(diffMs / 3600000);
+    if (diffH < 1) return '방금 전';
+    if (diffH < 24) return `${diffH}시간 전`;
+    const diffD = Math.floor(diffH / 24);
+    if (diffD < 7) return `${diffD}일 전`;
+    return d.toLocaleDateString('ko-KR', { month: 'long', day: 'numeric' });
+  } catch {
+    return '';
+  }
+}
+
+function isNewSubmission(iso?: string): boolean {
+  if (!iso) return false;
+  const utc = iso.endsWith('Z') || iso.includes('+') ? iso : iso + 'Z';
+  return Date.now() - new Date(utc).getTime() < 6 * 3600 * 1000;
+}
+
 export default function AdminScreen() {
   const insets = useSafeAreaInsets();
   const [tab, setTab] = useState<Tab>('verify');
   const [pending, setPending] = useState<PendingUser[]>([]);
+  const [approved, setApproved] = useState<PendingUser[]>([]);
   const [reports, setReports] = useState<AdminReport[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
@@ -26,8 +51,13 @@ export default function AdminScreen() {
 
   const load = useCallback(async () => {
     try {
-      const [p, r] = await Promise.all([getPendingVerifications(), getAdminReports()]);
+      const [p, a, r] = await Promise.all([
+        getPendingVerifications(),
+        getApprovedVerifications(),
+        getAdminReports(),
+      ]);
       setPending(p);
+      setApproved(a);
       setReports(r);
     } catch (e) {
       Alert.alert('오류', String(e));
@@ -62,8 +92,19 @@ export default function AdminScreen() {
     }
   };
 
-  const pendingCount = pending.length;
   const unresolvedReports = reports.filter(r => r.status !== 'resolved').length;
+
+  const navigateToDetail = (item: PendingUser) => {
+    router.push({
+      pathname: '/admin/verify-detail' as never,
+      params: {
+        userId: item.id,
+        name: item.name,
+        department: item.department,
+        cardUrl: item.studentCardUrl,
+      },
+    });
+  };
 
   return (
     <View style={styles.container}>
@@ -76,12 +117,18 @@ export default function AdminScreen() {
       </View>
 
       <View style={styles.tabBar}>
-        <TouchableOpacity style={[styles.tabBtn, tab === 'verify' && styles.tabBtnActive]} onPress={() => setTab('verify')}>
+        <TouchableOpacity
+          style={[styles.tabBtn, tab === 'verify' && styles.tabBtnActive]}
+          onPress={() => setTab('verify')}
+        >
           <Text style={[styles.tabText, tab === 'verify' && styles.tabTextActive]}>
-            학생증 심사 {pendingCount > 0 && `(${pendingCount})`}
+            학생증 심사 {pending.length > 0 && `(${pending.length})`}
           </Text>
         </TouchableOpacity>
-        <TouchableOpacity style={[styles.tabBtn, tab === 'reports' && styles.tabBtnActive]} onPress={() => setTab('reports')}>
+        <TouchableOpacity
+          style={[styles.tabBtn, tab === 'reports' && styles.tabBtnActive]}
+          onPress={() => setTab('reports')}
+        >
           <Text style={[styles.tabText, tab === 'reports' && styles.tabTextActive]}>
             신고 접수 {unresolvedReports > 0 && `(${unresolvedReports})`}
           </Text>
@@ -91,51 +138,118 @@ export default function AdminScreen() {
       {loading ? (
         <View style={styles.center}><ActivityIndicator size="large" color="#000" /></View>
       ) : tab === 'verify' ? (
-        <FlatList
-          data={pending}
-          keyExtractor={item => item.id}
+        <ScrollView
+          contentContainerStyle={styles.scroll}
           refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} />}
-          contentContainerStyle={pending.length === 0 ? styles.center : styles.list}
-          ListEmptyComponent={<Text style={styles.emptyText}>대기 중인 심사가 없어요</Text>}
-          renderItem={({ item }) => (
-            <TouchableOpacity
-              style={styles.card}
-              onPress={() => router.push({ pathname: '/admin/verify-detail' as never, params: { userId: item.id, name: item.name, department: item.department, cardUrl: item.studentCardUrl } })}
-            >
-              <View style={styles.cardAvatar}>
-                <Text style={styles.cardAvatarText}>{item.name[0] ?? '?'}</Text>
-              </View>
-              <View style={styles.cardInfo}>
-                <Text style={styles.cardName}>{item.name}</Text>
-                <Text style={styles.cardSub}>{item.department} · {item.email}</Text>
-              </View>
-              <Feather name="chevron-right" size={18} color="#d1d5db" />
-            </TouchableOpacity>
+        >
+          {/* 승인 대기 섹션 */}
+          <View style={styles.sectionHeader}>
+            <View style={styles.sectionDot} />
+            <Text style={styles.sectionTitle}>승인 대기</Text>
+            <Text style={styles.sectionCount}>{pending.length}명</Text>
+          </View>
+
+          {pending.length === 0 ? (
+            <View style={styles.emptyRow}>
+              <Text style={styles.emptyText}>대기 중인 심사가 없어요</Text>
+            </View>
+          ) : (
+            pending.map(item => (
+              <TouchableOpacity
+                key={item.id}
+                style={styles.card}
+                onPress={() => navigateToDetail(item)}
+              >
+                <View style={styles.cardAvatar}>
+                  <Text style={styles.cardAvatarText}>{item.name[0] ?? '?'}</Text>
+                </View>
+                <View style={styles.cardInfo}>
+                  <View style={styles.cardNameRow}>
+                    <Text style={styles.cardName}>{item.name}</Text>
+                    {isNewSubmission(item.cardSubmittedAt) && (
+                      <View style={styles.newBadge}>
+                        <Text style={styles.newBadgeText}>신규</Text>
+                      </View>
+                    )}
+                  </View>
+                  <Text style={styles.cardSub}>
+                    {item.department}
+                    {item.cardSubmittedAt ? ` · ${formatSubmittedAt(item.cardSubmittedAt)}` : ''}
+                  </Text>
+                </View>
+                <Feather name="chevron-right" size={18} color="#d1d5db" />
+              </TouchableOpacity>
+            ))
           )}
-        />
+
+          {/* 승인 완료 섹션 */}
+          <View style={[styles.sectionHeader, { marginTop: 16 }]}>
+            <View style={[styles.sectionDot, styles.sectionDotApproved]} />
+            <Text style={styles.sectionTitle}>승인 완료</Text>
+            <Text style={styles.sectionCount}>{approved.length}명</Text>
+          </View>
+
+          {approved.length === 0 ? (
+            <View style={styles.emptyRow}>
+              <Text style={styles.emptyText}>최근 승인 내역이 없어요</Text>
+            </View>
+          ) : (
+            approved.map(item => (
+              <TouchableOpacity
+                key={item.id}
+                style={[styles.card, styles.cardApproved]}
+                onPress={() => navigateToDetail(item)}
+              >
+                <View style={[styles.cardAvatar, styles.cardAvatarApproved]}>
+                  <Text style={styles.cardAvatarText}>{item.name[0] ?? '?'}</Text>
+                </View>
+                <View style={styles.cardInfo}>
+                  <View style={styles.cardNameRow}>
+                    <Text style={[styles.cardName, { color: '#374151' }]}>{item.name}</Text>
+                    <View style={styles.approvedBadge}>
+                      <Feather name="check" size={10} color="#10b981" />
+                      <Text style={styles.approvedBadgeText}>승인</Text>
+                    </View>
+                  </View>
+                  <Text style={styles.cardSub}>
+                    {item.department}
+                    {item.cardSubmittedAt ? ` · ${formatSubmittedAt(item.cardSubmittedAt)}` : ''}
+                  </Text>
+                </View>
+                <Feather name="chevron-right" size={18} color="#d1d5db" />
+              </TouchableOpacity>
+            ))
+          )}
+
+          <View style={{ height: 32 }} />
+        </ScrollView>
       ) : (
-        <FlatList
-          data={reports}
-          keyExtractor={item => item.id}
+        <ScrollView
+          contentContainerStyle={reports.length === 0 ? styles.center : styles.scroll}
           refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} />}
-          contentContainerStyle={reports.length === 0 ? styles.center : styles.list}
-          ListEmptyComponent={<Text style={styles.emptyText}>신고 내역이 없어요</Text>}
-          renderItem={({ item }) => (
-            <TouchableOpacity
-              style={styles.card}
-              onPress={() => { setResolveModal(item); setAdminNote(item.adminNote ?? ''); }}
-            >
-              <View style={[styles.statusDot, item.status === 'resolved' ? styles.dotResolved : styles.dotPending]} />
-              <View style={styles.cardInfo}>
-                <Text style={styles.cardName} numberOfLines={2}>{item.content || '내용 없음'}</Text>
-                <Text style={styles.cardSub}>
-                  {item.status === 'resolved' ? '처리 완료' : '처리 대기'} · {item.createdAt.slice(0, 10)}
-                </Text>
-              </View>
-              <Feather name="chevron-right" size={18} color="#d1d5db" />
-            </TouchableOpacity>
+        >
+          {reports.length === 0 ? (
+            <Text style={styles.emptyText}>신고 내역이 없어요</Text>
+          ) : (
+            reports.map(item => (
+              <TouchableOpacity
+                key={item.id}
+                style={styles.card}
+                onPress={() => { setResolveModal(item); setAdminNote(item.adminNote ?? ''); }}
+              >
+                <View style={[styles.statusDot, item.status === 'resolved' ? styles.dotResolved : styles.dotPending]} />
+                <View style={styles.cardInfo}>
+                  <Text style={styles.cardName} numberOfLines={2}>{item.content || '내용 없음'}</Text>
+                  <Text style={styles.cardSub}>
+                    {item.status === 'resolved' ? '처리 완료' : '처리 대기'} · {item.createdAt.slice(0, 10)}
+                  </Text>
+                </View>
+                <Feather name="chevron-right" size={18} color="#d1d5db" />
+              </TouchableOpacity>
+            ))
           )}
-        />
+          <View style={{ height: 32 }} />
+        </ScrollView>
       )}
 
       <Modal visible={!!resolveModal} transparent animationType="slide" onRequestClose={() => setResolveModal(null)}>
@@ -183,21 +297,45 @@ const styles = StyleSheet.create({
   tabBtnActive: { borderBottomWidth: 2, borderBottomColor: '#000' },
   tabText: { fontSize: 14, color: '#6a7282', fontWeight: '500' },
   tabTextActive: { color: '#000', fontWeight: '700' },
-  center: { flex: 1, alignItems: 'center', justifyContent: 'center' },
-  list: { paddingVertical: 8 },
-  emptyText: { fontSize: 15, color: '#99a1af' },
+  center: { flex: 1, alignItems: 'center', justifyContent: 'center', minHeight: 200 },
+  scroll: { paddingVertical: 8 },
+  sectionHeader: {
+    flexDirection: 'row', alignItems: 'center', gap: 8,
+    paddingHorizontal: 16, paddingVertical: 12,
+    backgroundColor: '#f9fafb',
+  },
+  sectionDot: { width: 8, height: 8, borderRadius: 4, backgroundColor: '#f59e0b' },
+  sectionDotApproved: { backgroundColor: '#10b981' },
+  sectionTitle: { fontSize: 13, fontWeight: '700', color: '#374151', flex: 1 },
+  sectionCount: { fontSize: 12, color: '#6a7282' },
+  emptyRow: { paddingVertical: 20, paddingHorizontal: 16, alignItems: 'center' },
+  emptyText: { fontSize: 14, color: '#99a1af' },
   card: {
     flexDirection: 'row', alignItems: 'center', paddingHorizontal: 16,
-    paddingVertical: 14, borderBottomWidth: 1, borderBottomColor: '#f9fafb', gap: 12,
+    paddingVertical: 14, borderBottomWidth: 1, borderBottomColor: '#f3f4f6', gap: 12,
   },
+  cardApproved: { backgroundColor: '#fafafa' },
   cardAvatar: {
     width: 40, height: 40, backgroundColor: '#000', borderRadius: 20,
     alignItems: 'center', justifyContent: 'center',
   },
+  cardAvatarApproved: { backgroundColor: '#6b7280' },
   cardAvatarText: { fontSize: 16, fontWeight: '700', color: '#fff' },
   cardInfo: { flex: 1 },
+  cardNameRow: { flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 2 },
   cardName: { fontSize: 15, fontWeight: '600', color: '#0a0a0a' },
-  cardSub: { fontSize: 12, color: '#6a7282', marginTop: 2 },
+  cardSub: { fontSize: 12, color: '#6a7282' },
+  newBadge: {
+    backgroundColor: '#fef3c7', borderRadius: 100,
+    paddingHorizontal: 7, paddingVertical: 2,
+  },
+  newBadgeText: { fontSize: 10, fontWeight: '700', color: '#d97706' },
+  approvedBadge: {
+    flexDirection: 'row', alignItems: 'center', gap: 2,
+    backgroundColor: '#d1fae5', borderRadius: 100,
+    paddingHorizontal: 7, paddingVertical: 2,
+  },
+  approvedBadgeText: { fontSize: 10, fontWeight: '700', color: '#10b981' },
   statusDot: { width: 10, height: 10, borderRadius: 5 },
   dotPending: { backgroundColor: '#f59e0b' },
   dotResolved: { backgroundColor: '#10b981' },

@@ -232,13 +232,17 @@ export async function uploadStudentCard(base64: string, mimeType: string = 'imag
 
   const { error: updateError } = await supabase
     .from('users')
-    .update({ student_card_url: path })
+    .update({ student_card_url: path, card_submitted_at: new Date().toISOString() })
     .eq('id', userId);
 
   if (updateError) throw new Error(`학생증 경로 저장 오류: ${updateError.message}`);
 
   // 재제출 시 심사 대기 상태로 초기화
-  await supabase.from('users').update({ verified_status: 'pending', rejection_reason: null }).eq('id', userId);
+  await supabase.from('users').update({
+    verified_status: 'pending',
+    rejection_reason: null,
+    card_submitted_at: new Date().toISOString(),
+  }).eq('id', userId);
 
   return path;
 }
@@ -334,7 +338,11 @@ export async function createTeam(payload: Omit<Team, 'id' | 'createdAt'>): Promi
 
   const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
   const buf = new Uint8Array(6);
-  crypto.getRandomValues(buf);
+  try {
+    crypto.getRandomValues(buf);
+  } catch {
+    for (let i = 0; i < 6; i++) buf[i] = Math.floor(Math.random() * 256);
+  }
   const randomCode = Array.from(buf).map(b => chars[b % chars.length]).join('');
 
   const insertData: Record<string, unknown> = {
@@ -865,15 +873,17 @@ export interface PendingUser {
   department: string;
   studentCardUrl: string;
   createdAt: string;
+  status: 'pending' | 'approved' | 'rejected';
+  cardSubmittedAt?: string;
 }
 
 export async function getPendingVerifications(): Promise<PendingUser[]> {
   const { data, error } = await supabase
     .from('users')
-    .select('id, name, email, department, student_card_url, created_at')
+    .select('id, name, email, department, student_card_url, created_at, card_submitted_at')
     .eq('verified_status', 'pending')
     .not('student_card_url', 'is', null)
-    .order('created_at', { ascending: true });
+    .order('card_submitted_at', { ascending: true });
   if (error) throw new Error(error.message);
   return (data ?? []).map(u => ({
     id: String(u.id),
@@ -882,6 +892,29 @@ export async function getPendingVerifications(): Promise<PendingUser[]> {
     department: u.department ?? '',
     studentCardUrl: u.student_card_url ?? '',
     createdAt: u.created_at ?? '',
+    status: 'pending' as const,
+    cardSubmittedAt: u.card_submitted_at ?? undefined,
+  }));
+}
+
+export async function getApprovedVerifications(): Promise<PendingUser[]> {
+  const { data, error } = await supabase
+    .from('users')
+    .select('id, name, email, department, student_card_url, created_at, card_submitted_at')
+    .eq('verified_status', 'approved')
+    .not('student_card_url', 'is', null)
+    .order('card_submitted_at', { ascending: false })
+    .limit(30);
+  if (error) throw new Error(error.message);
+  return (data ?? []).map(u => ({
+    id: String(u.id),
+    name: u.name ?? '',
+    email: u.email ?? '',
+    department: u.department ?? '',
+    studentCardUrl: u.student_card_url ?? '',
+    createdAt: u.created_at ?? '',
+    status: 'approved' as const,
+    cardSubmittedAt: u.card_submitted_at ?? undefined,
   }));
 }
 

@@ -32,7 +32,7 @@ export default function StudentIdPage({ defaultState = 'idle' }: Props) {
     try {
       await uploadStudentCard(base64, mimeType);
       setState('uploaded');
-      setTimeout(() => setState('pending'), 800);
+      setTimeout(() => router.replace('/pending'), 800);
     } catch (e) {
       setErrorMsg(String(e));
       setState('error');
