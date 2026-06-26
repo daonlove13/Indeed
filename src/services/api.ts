@@ -452,7 +452,7 @@ export async function toggleMeetingConfirmation(
 
 export async function toggleDatingCompletion(
   matchId: string,
-): Promise<{ completed: boolean; count: number }> {
+): Promise<{ completed: boolean; count: number; total: number }> {
   const userId = await getCurrentUserId();
   if (!userId) throw new Error('인증 정보가 없습니다.');
   const { data, error } = await supabase.rpc('toggle_dating_completion', {
@@ -460,7 +460,7 @@ export async function toggleDatingCompletion(
     p_user_id: userId,
   });
   if (error) throw new Error(`과팅 종료 처리 오류: ${error.message}`);
-  return data as { completed: boolean; count: number };
+  return data as { completed: boolean; count: number; total: number };
 }
 
 export async function getStats(): Promise<Stats> {
@@ -850,13 +850,69 @@ export async function getTeamByInviteCode(code: string): Promise<Team | null> {
 export async function submitReport(matchId: string | number, content: string): Promise<void> {
   const userId = await getCurrentUserId();
   if (!userId) throw new Error('인증 정보가 없습니다.');
+
+  // 상대 팀 리더를 target으로 설정
+  let targetId: string | null = null;
+  try {
+    const { data: match } = await supabase
+      .from('matches').select('team_a, team_b').eq('id', matchId).maybeSingle();
+    if (match) {
+      const { data: myMember } = await supabase
+        .from('team_members').select('team_id').eq('user_id', userId).maybeSingle();
+      const myTeamId = myMember?.team_id;
+      const otherTeamId = myTeamId === match.team_a ? match.team_b : match.team_a;
+      const { data: otherTeam } = await supabase
+        .from('teams').select('leader_id').eq('id', otherTeamId).maybeSingle();
+      targetId = otherTeam?.leader_id ?? null;
+    }
+  } catch {}
+
   const { error } = await supabase.from('reports').insert({
     reporter_id: userId,
+    target_id: targetId,
     match_id: String(matchId),
     content,
     status: 'pending',
   });
   if (error) throw new Error(error.message);
+}
+
+export interface MatchDetail {
+  id: string;
+  teamA: string;
+  teamB: string;
+  status: string;
+  totalMembers: number;
+  meetingConfirmedBy: string[];
+  datingCompletedBy: string[];
+}
+
+export async function getMatchDetail(matchId: string): Promise<MatchDetail | null> {
+  try {
+    const { data: match } = await supabase
+      .from('matches')
+      .select('id, team_a, team_b, status, meeting_confirmed_by, dating_completed_by')
+      .eq('id', matchId)
+      .maybeSingle();
+    if (!match) return null;
+
+    const [{ count: cA }, { count: cB }] = await Promise.all([
+      supabase.from('team_members').select('*', { count: 'exact', head: true }).eq('team_id', match.team_a),
+      supabase.from('team_members').select('*', { count: 'exact', head: true }).eq('team_id', match.team_b),
+    ]);
+
+    return {
+      id: String(match.id),
+      teamA: match.team_a,
+      teamB: match.team_b,
+      status: match.status ?? 'active',
+      totalMembers: (cA ?? 0) + (cB ?? 0),
+      meetingConfirmedBy: (match.meeting_confirmed_by as string[]) ?? [],
+      datingCompletedBy: (match.dating_completed_by as string[]) ?? [],
+    };
+  } catch {
+    return null;
+  }
 }
 
 // ── 관리자 기능 ────────────────────────────────────────────────────────────────
