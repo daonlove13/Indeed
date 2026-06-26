@@ -25,8 +25,7 @@ export default function InviteLinkPage() {
     if (!inviteInfo) return;
     try {
       await Share.share({
-        message: `indeed 과팅 초대! 코드: ${inviteInfo.code}\n${inviteInfo.link}`,
-        title: 'indeed 팀 초대',
+        message: `[indeed] 과팅 초대 코드: ${inviteInfo.code}\n\nindeed 앱에서 '팀 합류하기'를 누르고 코드를 입력해주세요!`,
       });
     } catch {}
   };
