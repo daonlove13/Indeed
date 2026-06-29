@@ -8,11 +8,12 @@ import { router } from 'expo-router';
 import { Feather } from '@expo/vector-icons';
 import {
   getPendingVerifications, getApprovedVerifications, getRejectedVerifications,
-  getAdminReports, resolveReport,
+  getAdminReports, resolveReport, getReportDetail, adminWarnUser, adminSuspendUser,
 } from '../../services/api';
-import type { PendingUser, AdminReport } from '../../services/api';
+import type { PendingUser, AdminReport, ReportDetail } from '../../services/api';
 
 type Tab = 'verify' | 'reports';
+type PenaltyType = 'none' | 'warn' | '3day' | '7day';
 
 function relativeTime(iso?: string): string {
   if (!iso) return '';
@@ -64,6 +65,8 @@ export default function AdminScreen() {
   const [resolveModal, setResolveModal] = useState<AdminReport | null>(null);
   const [adminNote, setAdminNote] = useState('');
   const [resolving, setResolving] = useState(false);
+  const [reportDetail, setReportDetail] = useState<ReportDetail | null>(null);
+  const [loadingDetail, setLoadingDetail] = useState(false);
 
   const load = useCallback(async () => {
     try {
@@ -88,18 +91,35 @@ export default function AdminScreen() {
   useEffect(() => { load(); }, [load]);
   const onRefresh = () => { setRefreshing(true); load(); };
 
-  const handleResolve = async (withPenalty: boolean) => {
+  const openResolveModal = async (item: AdminReport) => {
+    setResolveModal(item);
+    setAdminNote(item.adminNote ?? '');
+    setReportDetail(null);
+    setLoadingDetail(true);
+    try {
+      const detail = await getReportDetail(item);
+      setReportDetail(detail);
+    } catch {}
+    finally { setLoadingDetail(false); }
+  };
+
+  const handleResolve = async (penaltyType: PenaltyType) => {
     if (!resolveModal) return;
     setResolving(true);
     try {
-      await resolveReport(
-        resolveModal.id, adminNote,
-        withPenalty && resolveModal.targetId
-          ? { userId: resolveModal.targetId, level: 1, reason: adminNote }
-          : undefined,
-      );
+      await resolveReport(resolveModal.id, adminNote);
+      if (penaltyType !== 'none' && resolveModal.targetId) {
+        if (penaltyType === 'warn') {
+          await adminWarnUser(resolveModal.targetId);
+        } else if (penaltyType === '3day') {
+          await adminSuspendUser(resolveModal.targetId, 3);
+        } else if (penaltyType === '7day') {
+          await adminSuspendUser(resolveModal.targetId, 7);
+        }
+      }
       setResolveModal(null);
       setAdminNote('');
+      setReportDetail(null);
       load();
     } catch (e) {
       Alert.alert('오류', String(e));
@@ -154,7 +174,6 @@ export default function AdminScreen() {
           contentContainerStyle={styles.scroll}
           refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} />}
         >
-          {/* ── 승인 대기 ── */}
           <SectionHeader title="승인 대기" count={pending.length} color="#f59e0b" />
           {pending.length === 0
             ? <EmptyRow text="대기 중인 심사가 없어요" />
@@ -181,7 +200,6 @@ export default function AdminScreen() {
             ))
           }
 
-          {/* ── 승인 완료 ── */}
           <View style={{ marginTop: 8 }}>
             <SectionHeader title="승인 완료" count={approved.length} color="#10b981" />
             {approved.length === 0
@@ -209,7 +227,6 @@ export default function AdminScreen() {
             }
           </View>
 
-          {/* ── 반려 ── */}
           <View style={{ marginTop: 8 }}>
             <SectionHeader title="반려" count={rejected.length} color="#ef4444" />
             {rejected.length === 0
@@ -248,7 +265,7 @@ export default function AdminScreen() {
             : reports.map(item => (
               <TouchableOpacity
                 key={item.id} style={styles.card}
-                onPress={() => { setResolveModal(item); setAdminNote(item.adminNote ?? ''); }}
+                onPress={() => openResolveModal(item)}
               >
                 <View style={[styles.statusDot, item.status === 'resolved' ? styles.dotResolved : styles.dotPending]} />
                 <View style={styles.cardInfo}>
@@ -265,26 +282,115 @@ export default function AdminScreen() {
         </ScrollView>
       )}
 
-      <Modal visible={!!resolveModal} transparent animationType="slide" onRequestClose={() => setResolveModal(null)}>
+      {/* 신고 처리 모달 */}
+      <Modal visible={!!resolveModal} transparent animationType="slide" onRequestClose={() => { setResolveModal(null); setReportDetail(null); }}>
         <View style={styles.modalOverlay}>
-          <View style={styles.modalBox}>
+          <View style={[styles.adminModalBox, { paddingBottom: insets.bottom + 16 }]}>
             <Text style={styles.modalTitle}>신고 처리</Text>
-            <Text style={styles.modalContent}>{resolveModal?.content}</Text>
-            <TextInput
-              style={styles.modalInput} value={adminNote} onChangeText={setAdminNote}
-              placeholder="관리자 메모 (선택)" placeholderTextColor="#99a1af" multiline
-            />
-            <View style={styles.modalBtns}>
-              <TouchableOpacity style={styles.modalCancelBtn} onPress={() => setResolveModal(null)}>
+
+            <ScrollView style={styles.adminModalScroll} showsVerticalScrollIndicator={false} nestedScrollEnabled>
+              {/* 신고자 / 신고 대상 */}
+              {loadingDetail && (
+                <View style={styles.detailLoading}>
+                  <ActivityIndicator size="small" color="#000" />
+                  <Text style={styles.detailLoadingText}>상세 정보 불러오는 중...</Text>
+                </View>
+              )}
+              {!loadingDetail && reportDetail && (
+                <View style={styles.userInfoSection}>
+                  <View style={styles.userChip}>
+                    <Text style={styles.chipLabel}>신고자</Text>
+                    <Text style={styles.chipValue}>
+                      {reportDetail.reporterName}
+                      {reportDetail.reporterDept ? ` · ${reportDetail.reporterDept}` : ''}
+                    </Text>
+                  </View>
+                  {resolveModal?.targetId && (
+                    <View style={[styles.userChip, { backgroundColor: '#fee2e2' }]}>
+                      <Text style={[styles.chipLabel, { color: '#dc2626' }]}>신고 대상</Text>
+                      <Text style={[styles.chipValue, { color: '#dc2626' }]}>
+                        {reportDetail.targetName}
+                        {reportDetail.targetDept ? ` · ${reportDetail.targetDept}` : ''}
+                      </Text>
+                    </View>
+                  )}
+                </View>
+              )}
+
+              {/* 신고 내용 */}
+              <Text style={styles.modalContent}>{resolveModal?.content || '내용 없음'}</Text>
+
+              {/* 채팅 내역 */}
+              {!loadingDetail && reportDetail && reportDetail.messages.length > 0 && (
+                <View style={styles.chatPreviewSection}>
+                  <Text style={styles.chatPreviewTitle}>
+                    관련 채팅 내역 (최근 {Math.min(reportDetail.messages.length, 10)}개)
+                  </Text>
+                  {reportDetail.messages.slice(-10).map((msg, i) => (
+                    <View key={i} style={styles.chatPreviewRow}>
+                      <Text style={styles.chatPreviewSender}>{msg.senderName}</Text>
+                      <Text style={styles.chatPreviewText} numberOfLines={3}>{msg.text}</Text>
+                      <Text style={styles.chatPreviewTime}>{msg.time}</Text>
+                    </View>
+                  ))}
+                </View>
+              )}
+
+              {/* 관리자 메모 */}
+              <TextInput
+                style={styles.modalInput}
+                value={adminNote}
+                onChangeText={setAdminNote}
+                placeholder="관리자 메모 (선택)"
+                placeholderTextColor="#99a1af"
+                multiline
+              />
+            </ScrollView>
+
+            {/* 처리 버튼 */}
+            <View style={styles.penaltyRow}>
+              <TouchableOpacity
+                style={styles.modalCancelBtn}
+                onPress={() => { setResolveModal(null); setReportDetail(null); }}
+              >
                 <Text style={styles.modalCancelText}>취소</Text>
               </TouchableOpacity>
-              <TouchableOpacity style={[styles.modalActionBtn, { backgroundColor: '#ef4444' }]} onPress={() => handleResolve(true)} disabled={resolving}>
-                {resolving ? <ActivityIndicator size="small" color="#fff" /> : <Text style={styles.modalActionText}>처리+패널티</Text>}
-              </TouchableOpacity>
-              <TouchableOpacity style={[styles.modalActionBtn, { backgroundColor: '#000' }]} onPress={() => handleResolve(false)} disabled={resolving}>
-                {resolving ? <ActivityIndicator size="small" color="#fff" /> : <Text style={styles.modalActionText}>처리만</Text>}
+              <TouchableOpacity
+                style={[styles.adminActionBtn, { backgroundColor: '#374151' }]}
+                onPress={() => handleResolve('none')}
+                disabled={resolving}
+              >
+                {resolving
+                  ? <ActivityIndicator size="small" color="#fff" />
+                  : <Text style={styles.adminActionText}>처리만</Text>}
               </TouchableOpacity>
             </View>
+
+            {resolveModal?.targetId && (
+              <View style={[styles.penaltyRow, { marginTop: 8 }]}>
+                <TouchableOpacity
+                  style={[styles.adminActionBtn, { backgroundColor: '#f59e0b' }]}
+                  onPress={() => handleResolve('warn')}
+                  disabled={resolving}
+                >
+                  <Text style={styles.adminActionText}>경고</Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  style={[styles.adminActionBtn, { backgroundColor: '#ef4444' }]}
+                  onPress={() => handleResolve('3day')}
+                  disabled={resolving}
+                >
+                  <Text style={styles.adminActionText}>3일 정지</Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  style={[styles.adminActionBtn, { backgroundColor: '#7f1d1d' }]}
+                  onPress={() => handleResolve('7day')}
+                  disabled={resolving}
+                >
+                  <Text style={styles.adminActionText}>7일 정지</Text>
+                </TouchableOpacity>
+              </View>
+            )}
           </View>
         </View>
       </Modal>
@@ -337,16 +443,49 @@ const styles = StyleSheet.create({
   dotPending: { backgroundColor: '#f59e0b' },
   dotResolved: { backgroundColor: '#10b981' },
   modalOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'flex-end' },
-  modalBox: { backgroundColor: '#fff', borderTopLeftRadius: 24, borderTopRightRadius: 24, padding: 24, paddingBottom: 40 },
-  modalTitle: { fontSize: 18, fontWeight: '700', color: '#0a0a0a', marginBottom: 8 },
-  modalContent: { fontSize: 14, color: '#374151', backgroundColor: '#f9fafb', borderRadius: 12, padding: 12, marginBottom: 14 },
+  adminModalBox: {
+    backgroundColor: '#fff', borderTopLeftRadius: 24, borderTopRightRadius: 24,
+    padding: 24, paddingBottom: 16, maxHeight: '90%',
+  },
+  adminModalScroll: { maxHeight: 420, marginBottom: 16 },
+  modalTitle: { fontSize: 18, fontWeight: '700', color: '#0a0a0a', marginBottom: 12 },
+  detailLoading: { flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 12 },
+  detailLoadingText: { fontSize: 13, color: '#6a7282' },
+  userInfoSection: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginBottom: 12 },
+  userChip: {
+    flexDirection: 'row', gap: 6, alignItems: 'center',
+    backgroundColor: '#f3f4f6', borderRadius: 100,
+    paddingHorizontal: 12, paddingVertical: 6,
+  },
+  chipLabel: { fontSize: 11, fontWeight: '700', color: '#6a7282' },
+  chipValue: { fontSize: 12, fontWeight: '600', color: '#374151' },
+  modalContent: {
+    fontSize: 14, color: '#374151', backgroundColor: '#f9fafb',
+    borderRadius: 12, padding: 12, marginBottom: 14,
+  },
+  chatPreviewSection: {
+    borderRadius: 12, borderWidth: 1, borderColor: '#e5e7eb',
+    marginBottom: 14, overflow: 'hidden',
+  },
+  chatPreviewTitle: {
+    fontSize: 12, fontWeight: '700', color: '#6a7282',
+    paddingHorizontal: 12, paddingVertical: 8, backgroundColor: '#f9fafb',
+  },
+  chatPreviewRow: {
+    paddingHorizontal: 12, paddingVertical: 8,
+    borderTopWidth: 1, borderTopColor: '#f3f4f6',
+    flexDirection: 'row', gap: 8, alignItems: 'flex-start',
+  },
+  chatPreviewSender: { fontSize: 11, fontWeight: '700', color: '#374151', minWidth: 48 },
+  chatPreviewText: { flex: 1, fontSize: 12, color: '#0a0a0a', lineHeight: 18 },
+  chatPreviewTime: { fontSize: 10, color: '#99a1af' },
   modalInput: {
     backgroundColor: '#f3f4f6', borderRadius: 12, padding: 12,
-    fontSize: 14, color: '#0a0a0a', minHeight: 80, textAlignVertical: 'top', marginBottom: 16,
+    fontSize: 14, color: '#0a0a0a', minHeight: 80, textAlignVertical: 'top',
   },
-  modalBtns: { flexDirection: 'row', gap: 8 },
+  penaltyRow: { flexDirection: 'row', gap: 8 },
   modalCancelBtn: { flex: 1, paddingVertical: 13, borderRadius: 12, backgroundColor: '#f3f4f6', alignItems: 'center' },
   modalCancelText: { fontSize: 14, fontWeight: '600', color: '#6a7282' },
-  modalActionBtn: { flex: 1, paddingVertical: 13, borderRadius: 12, alignItems: 'center' },
-  modalActionText: { fontSize: 14, fontWeight: '600', color: '#fff' },
+  adminActionBtn: { flex: 1, paddingVertical: 13, borderRadius: 12, alignItems: 'center' },
+  adminActionText: { fontSize: 13, fontWeight: '700', color: '#fff' },
 });

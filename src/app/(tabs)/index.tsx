@@ -225,7 +225,20 @@ export default function HomeScreen() {
             onInviteTeam={() => router.push('/invite-link')}
             onToggleApply={async () => {
               try { await toggleApply(); }
-              catch { Alert.alert('오류', '신청 상태 변경에 실패했어요. 다시 시도해주세요.'); }
+              catch (e) {
+                const msg = String(e);
+                if (msg.includes('MEMBER_LIMIT:')) {
+                  const memberName = msg.split('MEMBER_LIMIT:')[1];
+                  Alert.alert(
+                    '과팅 신청 불가',
+                    `${memberName}님이 이미 과팅 3개를 진행 중이에요.\n${memberName}님의 기존 과팅을 먼저 마무리한 후 새 과팅을 해주세요.`,
+                  );
+                } else if (msg.includes('팀원이 부족')) {
+                  Alert.alert('팀원 부족', msg.replace('Error: ', ''));
+                } else {
+                  Alert.alert('오류', '신청 상태 변경에 실패했어요. 다시 시도해주세요.');
+                }
+              }
             }}
             onDeleteTeam={handleDeleteTeam}
             onLeaveTeam={handleLeaveTeam}

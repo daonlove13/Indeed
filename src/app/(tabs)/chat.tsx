@@ -50,7 +50,7 @@ function ChatItemRow({ chat, onPress }: { chat: ChatItem; onPress: () => void })
 }
 
 export default function ChatScreen() {
-  const { chats, loading } = useChats();
+  const { chats, loading, markRead } = useChats();
   const { unreadCount } = useNotifications();
   const insets = useSafeAreaInsets();
   const [activeTab, setActiveTab] = useState<'active' | 'done'>('active');
@@ -111,7 +111,10 @@ export default function ChatScreen() {
           renderItem={({ item }) => (
             <ChatItemRow
               chat={item}
-              onPress={() => router.push({ pathname: '/chat-room', params: { id: String(item.id), name: item.name } })}
+              onPress={() => {
+                markRead(item.id);
+                router.push({ pathname: '/chat-room', params: { id: String(item.id), name: item.name } });
+              }}
             />
           )}
           showsVerticalScrollIndicator={false}

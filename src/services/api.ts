@@ -385,6 +385,25 @@ export async function deleteTeam(): Promise<{ ok: boolean }> {
   return { ok: true };
 }
 
+async function checkMemberMatchLimit(teamId: string): Promise<{ eligible: boolean; blockedName?: string }> {
+  const { data: members } = await supabase.from('team_members').select('user_id').eq('team_id', teamId);
+  if (!members || members.length === 0) return { eligible: true };
+
+  for (const { user_id } of members) {
+    const { data: memberTeams } = await supabase.from('team_members').select('team_id').eq('user_id', user_id);
+    if (!memberTeams || memberTeams.length === 0) continue;
+    const teamIds = memberTeams.map((t: { team_id: string }) => t.team_id);
+    const orFilter = teamIds.map((id: string) => `team_a.eq.${id},team_b.eq.${id}`).join(',');
+    const { count } = await supabase.from('matches').select('*', { count: 'exact', head: true })
+      .eq('status', 'active').or(orFilter);
+    if ((count ?? 0) >= 3) {
+      const { data: user } = await supabase.from('users').select('name').eq('id', user_id).maybeSingle();
+      return { eligible: false, blockedName: user?.name ?? '팀원' };
+    }
+  }
+  return { eligible: true };
+}
+
 export async function toggleApply(): Promise<Team> {
   const team = await getTeam();
   if (!team) throw new Error('팀이 없습니다.');
@@ -395,8 +414,18 @@ export async function toggleApply(): Promise<Team> {
     return { ...team, applied: false, status: 'waiting' };
   }
 
-  const { error } = await supabase.rpc('apply_and_match', { my_team_id: team.id });
+  // 팀원 중 활성 매칭 3개 이상인 사람 체크
+  const eligibility = await checkMemberMatchLimit(team.id);
+  if (!eligibility.eligible) {
+    throw new Error(`MEMBER_LIMIT:${eligibility.blockedName}`);
+  }
+
+  const { data, error } = await supabase.rpc('apply_and_match', { my_team_id: team.id });
   if (error) throw new Error(`신청 상태 변경 오류: ${error.message}`);
+
+  if (data === 'not_enough_members') {
+    throw new Error('팀원이 부족해요. 팀 인원을 채운 후 신청해주세요.');
+  }
 
   // RPC가 매칭에 성공했을 수도 있으므로 DB에서 최신 상태 재조회
   const freshTeam = await getTeam();
@@ -691,7 +720,7 @@ export async function getMessages(chatId: string | number): Promise<Message[]> {
         sender: isMe ? 'me' : 'other',
         time: formatTime(m.created_at),
         senderName: isMe ? undefined : (dept ? `${dept} ${senderName}` : senderName),
-        readCount: isMe ? Math.max(readBy.length, 1) : readBy.length,
+        readCount: readBy.length,
         isMyTeam,
       };
     });
@@ -729,21 +758,58 @@ export async function sendMessage(chatId: string | number, data: Omit<Message, '
 
 export async function getHistory(): Promise<HistoryItem[]> {
   try {
-    const team = await getTeam();
-    if (!team) return [];
+    const userId = await getCurrentUserId();
+    if (!userId) return [];
 
-    const { data, error } = await supabase
-      .from('matches').select('*')
-      .or(`team_a.eq.${team.id},team_b.eq.${team.id}`).eq('status', 'completed');
+    // 메시지를 보낸 match_id 기준으로 참여 이력 조회 (팀 해체 후에도 유지)
+    const { data: sentMsgs } = await supabase
+      .from('messages').select('match_id').eq('sender_id', userId);
+    const participatedMatchIds = [...new Set((sentMsgs ?? []).map(m => m.match_id as string))];
 
-    if (error) throw error;
+    // 현재 팀 기반으로도 보완
+    const [{ data: ledTeams }, { data: memberRows }] = await Promise.all([
+      supabase.from('teams').select('id').eq('leader_id', userId),
+      supabase.from('team_members').select('team_id').eq('user_id', userId),
+    ]);
+    const myCurrentTeamIds = [
+      ...(ledTeams ?? []).map(t => t.id as string),
+      ...(memberRows ?? []).map(r => r.team_id as string),
+    ].filter((v, i, a) => a.indexOf(v) === i);
 
-    return (data ?? []).map((m, i) => ({
-      id: i + 1,
-      name: '매칭 완료',
-      date: m.created_at ? new Date(m.created_at).toLocaleDateString('ko-KR') : '',
-      place: '충북대 근처',
-    }));
+    let matchQuery = supabase.from('matches').select('*').eq('status', 'completed').order('created_at', { ascending: false });
+
+    const teamFilter = myCurrentTeamIds.length > 0
+      ? myCurrentTeamIds.map(id => `team_a.eq.${id},team_b.eq.${id}`).join(',')
+      : null;
+
+    if (participatedMatchIds.length > 0 && teamFilter) {
+      matchQuery = matchQuery.or(`id.in.(${participatedMatchIds.join(',')}),${teamFilter}`);
+    } else if (participatedMatchIds.length > 0) {
+      matchQuery = matchQuery.in('id', participatedMatchIds);
+    } else if (teamFilter) {
+      matchQuery = matchQuery.or(teamFilter);
+    } else {
+      return [];
+    }
+
+    const { data: matches, error } = await matchQuery;
+    if (error || !matches || matches.length === 0) return [];
+
+    const allTeamIds = [...new Set(matches.flatMap(m => [m.team_a as string, m.team_b as string]))];
+    const { data: teams } = await supabase.from('teams').select('id, team_name').in('id', allTeamIds);
+    const teamNameMap = new Map((teams ?? []).map(t => [t.id as string, t.team_name as string]));
+    const myTeamIdSet = new Set(myCurrentTeamIds);
+
+    return matches.map((m, i) => {
+      const myTeamId = myTeamIdSet.has(m.team_a) ? m.team_a : myTeamIdSet.has(m.team_b) ? m.team_b : m.team_a;
+      const otherTeamId = myTeamId === m.team_a ? m.team_b : m.team_a;
+      return {
+        id: i + 1,
+        name: teamNameMap.get(otherTeamId) ?? '상대 팀',
+        date: m.created_at ? new Date(m.created_at).toLocaleDateString('ko-KR') : '',
+        place: m.meeting_place ?? '장소 미정',
+      };
+    });
   } catch {
     return [];
   }
@@ -847,29 +913,57 @@ export async function getTeamByInviteCode(code: string): Promise<Team | null> {
 
 // ── 신고 기능 ──────────────────────────────────────────────────────────────────
 
-export async function submitReport(matchId: string | number, content: string): Promise<void> {
-  const userId = await getCurrentUserId();
-  if (!userId) throw new Error('인증 정보가 없습니다.');
+export interface MatchMember {
+  userId: string;
+  name: string;
+  department: string;
+}
 
-  // 상대 팀 리더를 target으로 설정
-  let targetId: string | null = null;
+export async function getMatchMembers(matchId: string): Promise<MatchMember[]> {
   try {
+    const userId = await getCurrentUserId();
+    if (!userId) return [];
+
     const { data: match } = await supabase
       .from('matches').select('team_a, team_b').eq('id', matchId).maybeSingle();
-    if (match) {
-      const { data: myMember } = await supabase
-        .from('team_members').select('team_id').eq('user_id', userId).maybeSingle();
-      const myTeamId = myMember?.team_id;
-      const otherTeamId = myTeamId === match.team_a ? match.team_b : match.team_a;
-      const { data: otherTeam } = await supabase
-        .from('teams').select('leader_id').eq('id', otherTeamId).maybeSingle();
-      targetId = otherTeam?.leader_id ?? null;
-    }
-  } catch {}
+    if (!match) return [];
 
+    const { data: leaderTeam } = await supabase.from('teams').select('id').eq('leader_id', userId).maybeSingle();
+    let myTeamId: string | null = leaderTeam?.id ?? null;
+    if (!myTeamId) {
+      const { data: memberRow } = await supabase.from('team_members').select('team_id').eq('user_id', userId).maybeSingle();
+      myTeamId = memberRow?.team_id ?? null;
+    }
+
+    const otherTeamId = myTeamId === match.team_a ? match.team_b : match.team_a;
+    const { data: members } = await supabase
+      .from('team_members')
+      .select('user_id, users(name, department)')
+      .eq('team_id', otherTeamId);
+
+    return (members ?? []).map(m => {
+      const user = m.users as { name?: string; department?: string } | null;
+      return {
+        userId: String(m.user_id),
+        name: user?.name ?? '상대',
+        department: user?.department ?? '',
+      };
+    });
+  } catch {
+    return [];
+  }
+}
+
+export async function submitReport(
+  matchId: string | number,
+  targetUserId: string,
+  content: string,
+): Promise<void> {
+  const userId = await getCurrentUserId();
+  if (!userId) throw new Error('인증 정보가 없습니다.');
   const { error } = await supabase.from('reports').insert({
     reporter_id: userId,
-    target_id: targetId,
+    target_id: targetUserId,
     match_id: String(matchId),
     content,
     status: 'pending',
@@ -885,13 +979,29 @@ export interface MatchDetail {
   totalMembers: number;
   meetingConfirmedBy: string[];
   datingCompletedBy: string[];
+  meetingPlace?: string;
+  meetingDate?: string;
+  meetingTime?: string;
+}
+
+export async function updateMeetingInfo(
+  matchId: string,
+  place: string,
+  date: string,
+  time: string,
+): Promise<void> {
+  const { error } = await supabase
+    .from('matches')
+    .update({ meeting_place: place || null, meeting_date: date || null, meeting_time: time || null })
+    .eq('id', matchId);
+  if (error) throw new Error(error.message);
 }
 
 export async function getMatchDetail(matchId: string): Promise<MatchDetail | null> {
   try {
     const { data: match } = await supabase
       .from('matches')
-      .select('id, team_a, team_b, status, meeting_confirmed_by, dating_completed_by')
+      .select('id, team_a, team_b, status, meeting_confirmed_by, dating_completed_by, meeting_place, meeting_date, meeting_time')
       .eq('id', matchId)
       .maybeSingle();
     if (!match) return null;
@@ -909,6 +1019,9 @@ export async function getMatchDetail(matchId: string): Promise<MatchDetail | nul
       totalMembers: (cA ?? 0) + (cB ?? 0),
       meetingConfirmedBy: (match.meeting_confirmed_by as string[]) ?? [],
       datingCompletedBy: (match.dating_completed_by as string[]) ?? [],
+      meetingPlace: match.meeting_place ?? undefined,
+      meetingDate: match.meeting_date ?? undefined,
+      meetingTime: match.meeting_time ?? undefined,
     };
   } catch {
     return null;
@@ -1026,6 +1139,67 @@ export interface AdminReport {
   createdAt: string;
 }
 
+export interface ReportDetail {
+  reporterName: string;
+  reporterDept: string;
+  targetName: string;
+  targetDept: string;
+  messages: Array<{ senderName: string; text: string; time: string }>;
+}
+
+export async function getReportDetail(report: AdminReport): Promise<ReportDetail> {
+  const [reporterResult, targetResult] = await Promise.all([
+    report.reporterId
+      ? supabase.from('users').select('name, department').eq('id', report.reporterId).maybeSingle()
+      : Promise.resolve({ data: null }),
+    report.targetId
+      ? supabase.from('users').select('name, department').eq('id', report.targetId).maybeSingle()
+      : Promise.resolve({ data: null }),
+  ]);
+
+  const reporter = (reporterResult as { data: { name?: string; department?: string } | null }).data;
+  const target = (targetResult as { data: { name?: string; department?: string } | null }).data;
+
+  let messages: ReportDetail['messages'] = [];
+  if (report.matchId && report.targetId) {
+    const { data: msgs } = await supabase
+      .from('messages')
+      .select('content, created_at, users(name)')
+      .eq('match_id', report.matchId)
+      .eq('sender_id', report.targetId)
+      .order('created_at', { ascending: false })
+      .limit(20);
+    messages = (msgs ?? []).reverse().map(m => ({
+      senderName: (m.users as { name?: string } | null)?.name ?? '알 수 없음',
+      text: m.content ?? '',
+      time: formatTime(m.created_at),
+    }));
+  }
+
+  return {
+    reporterName: reporter?.name ?? '알 수 없음',
+    reporterDept: reporter?.department ?? '',
+    targetName: target?.name ?? '알 수 없음',
+    targetDept: target?.department ?? '',
+    messages,
+  };
+}
+
+export async function adminWarnUser(userId: string): Promise<void> {
+  const { data } = await supabase.from('users').select('penalties').eq('id', userId).maybeSingle();
+  const current = (data?.penalties as number) ?? 0;
+  const { error } = await supabase.from('users').update({ penalties: current + 1 }).eq('id', userId);
+  if (error) throw new Error(error.message);
+}
+
+export async function adminSuspendUser(userId: string, days: number): Promise<void> {
+  const until = new Date();
+  until.setDate(until.getDate() + days);
+  const { error } = await supabase
+    .from('users').update({ suspended_until: until.toISOString() }).eq('id', userId);
+  if (error) throw new Error(error.message);
+}
+
 export async function getAdminReports(): Promise<AdminReport[]> {
   const { data, error } = await supabase
     .from('reports')
@@ -1044,20 +1218,10 @@ export async function getAdminReports(): Promise<AdminReport[]> {
   }));
 }
 
-export async function resolveReport(
-  reportId: string,
-  adminNote: string,
-  penalty?: { userId: string; level: number; reason: string },
-): Promise<void> {
+export async function resolveReport(reportId: string, adminNote: string): Promise<void> {
   const { error } = await supabase
     .from('reports').update({ status: 'resolved', admin_note: adminNote }).eq('id', reportId);
   if (error) throw new Error(error.message);
-  if (penalty) {
-    const { error: pe } = await supabase.from('penalties').insert({
-      user_id: penalty.userId, level: penalty.level, reason: penalty.reason,
-    });
-    if (pe) throw new Error(pe.message);
-  }
 }
 
 export async function joinTeamByInviteCode(code: string): Promise<{ ok: boolean; message: string }> {

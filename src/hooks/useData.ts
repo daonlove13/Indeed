@@ -8,6 +8,16 @@ import type {
 const cache = new Map<string, { data: unknown; ts: number }>();
 const CACHE_TTL = 30_000;
 
+// 모든 useChats 인스턴스를 동기화하는 간단한 이벤트 버스
+let chatsReloadCallbacks: Array<() => void> = [];
+function subscribeChatsReload(cb: () => void) {
+  chatsReloadCallbacks.push(cb);
+  return () => { chatsReloadCallbacks = chatsReloadCallbacks.filter(x => x !== cb); };
+}
+export function broadcastChatsReload() {
+  chatsReloadCallbacks.forEach(cb => cb());
+}
+
 function useFetch<T>(fetcher: () => Promise<T>, deps: unknown[] = [], cacheKey?: string) {
   const entry = cacheKey ? cache.get(cacheKey) : undefined;
   const cached = (entry && Date.now() - entry.ts < CACHE_TTL) ? (entry.data as T) : undefined;
@@ -153,9 +163,18 @@ export function useChats() {
 
   const instanceId = useRef(Math.random().toString(36).slice(2)).current;
 
+  // 다른 useChats 인스턴스에서 markRead 호출 시 함께 리로드
+  useEffect(() => subscribeChatsReload(() => reloadRef.current()), []);
+
   useEffect(() => {
     const ch = supabase.channel(`chats_matches_changes_${instanceId}`)
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'matches' }, () => reloadRef.current())
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'matches' }, (payload) => {
+        // 완료된 매치는 자동으로 읽음 처리
+        if (payload.eventType === 'UPDATE' && (payload.new as { status?: string })?.status === 'completed') {
+          api.markMessagesRead((payload.new as { id: string }).id).catch(() => {});
+        }
+        reloadRef.current();
+      })
       .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'messages' }, (payload) => {
         const newMsg = payload.new as { match_id: string; sender_id: string };
         supabase.auth.getUser().then(({ data: { user } }) => {
@@ -178,11 +197,14 @@ export function useChats() {
 
   const markRead = useCallback(async (id: string | number) => {
     try {
-      await api.markMessagesRead(id);
+      // 낙관적으로 현재 인스턴스 즉시 업데이트
       setData(prev => prev ? {
         ...prev,
         active: prev.active.map(c => c.id === id ? { ...c, unread: 0 } : c),
       } : prev);
+      // DB 업데이트 후 다른 인스턴스(_layout.tsx 등)도 동기화
+      await api.markMessagesRead(id);
+      broadcastChatsReload();
     } catch {}
   }, [setData]);
 
@@ -216,7 +238,7 @@ export function useMessages(chatId: string | number) {
             if (!prev) return prev;
             return prev.map(msg =>
               msg.dbId === String(updated.id)
-                ? { ...msg, readCount: Math.max(readBy.length, msg.sender === 'me' ? 1 : 0) }
+                ? { ...msg, readCount: readBy.length }
                 : msg
             );
           });
