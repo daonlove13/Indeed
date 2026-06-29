@@ -1224,6 +1224,32 @@ export async function resolveReport(reportId: string, adminNote: string): Promis
   if (error) throw new Error(error.message);
 }
 
+export async function kickTeamMember(teamId: string, memberId: string): Promise<void> {
+  const userId = await getCurrentUserId();
+  if (!userId) throw new Error('인증 정보가 없습니다.');
+  const { data: team } = await supabase.from('teams').select('leader_id').eq('id', teamId).maybeSingle();
+  if (!team || team.leader_id !== userId) throw new Error('팀장만 강퇴할 수 있어요.');
+  const { error } = await supabase.from('team_members').delete().eq('team_id', teamId).eq('user_id', memberId);
+  if (error) throw new Error(`강퇴 오류: ${error.message}`);
+}
+
+export async function isPushEnabled(): Promise<boolean> {
+  try {
+    const userId = await getCurrentUserId();
+    if (!userId) return false;
+    const { data } = await supabase.from('push_subscriptions').select('id').eq('user_id', userId).maybeSingle();
+    return !!data;
+  } catch {
+    return false;
+  }
+}
+
+export async function disablePush(): Promise<void> {
+  const userId = await getCurrentUserId();
+  if (!userId) return;
+  await supabase.from('push_subscriptions').delete().eq('user_id', userId);
+}
+
 export async function joinTeamByInviteCode(code: string): Promise<{ ok: boolean; message: string }> {
   const userId = await getCurrentUserId();
   if (!userId) return { ok: false, message: '로그인이 필요합니다.' };

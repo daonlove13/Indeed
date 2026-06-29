@@ -1,9 +1,11 @@
-import { View, Text, StyleSheet, TouchableOpacity, ScrollView, Alert } from 'react-native';
+import { useState, useEffect } from 'react';
+import { View, Text, StyleSheet, TouchableOpacity, ScrollView, Switch, Modal } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
 import { Feather } from '@expo/vector-icons';
 import { useProfile, useHistory, useNotifications } from '../../hooks/useData';
-import { authSignOut } from '../../services/api';
+import { authSignOut, isPushEnabled, disablePush } from '../../services/api';
+import { registerPushToken } from '../../lib/notifications';
 
 export default function MyScreen() {
   const { profile, loading: profileLoading } = useProfile();
@@ -11,30 +13,55 @@ export default function MyScreen() {
   const { unreadCount } = useNotifications();
   const insets = useSafeAreaInsets();
 
+  const [logoutModalVisible, setLogoutModalVisible] = useState(false);
+  const [pushEnabled, setPushEnabled] = useState(true);
+  const [pushLoading, setPushLoading] = useState(false);
+
+  useEffect(() => {
+    isPushEnabled().then(setPushEnabled);
+  }, []);
+
   const initial = profile?.name?.[0] ?? '?';
   const recentHistory = history.slice(0, 2);
 
-  const handleLogout = () => {
-    Alert.alert('로그아웃', '로그아웃 하시겠어요?', [
-      { text: '취소', style: 'cancel' },
-      {
-        text: '로그아웃', style: 'destructive',
-        onPress: async () => {
-          await authSignOut();
-          router.replace('/splash');
-        },
-      },
-    ]);
+  const handleLogout = () => setLogoutModalVisible(true);
+
+  const confirmLogout = async () => {
+    setLogoutModalVisible(false);
+    await authSignOut();
+    router.replace('/splash');
   };
 
-  const menuItems = [
-    ...(profile?.isAdmin ? [{ label: '관리자 메뉴', onPress: () => router.push('/admin' as never), admin: true }] : []),
-    { label: '과팅 내역', onPress: () => router.push('/history') },
-    { label: '알림', onPress: () => router.push('/notifications') },
-    { label: '이용약관', onPress: () => {} },
-    { label: '개인정보처리방침', onPress: () => {} },
-    { label: '로그아웃', onPress: handleLogout, danger: true },
-  ] as { label: string; onPress: () => void; danger?: boolean; admin?: boolean }[];
+  const handlePushToggle = async (value: boolean) => {
+    if (pushLoading) return;
+    setPushEnabled(value);
+    setPushLoading(true);
+    try {
+      if (!value) {
+        await disablePush();
+      } else {
+        await registerPushToken();
+      }
+    } catch {
+      setPushEnabled(!value);
+    } finally {
+      setPushLoading(false);
+    }
+  };
+
+  type PressItem = { type: 'press'; label: string; onPress: () => void; danger?: boolean; admin?: boolean };
+  type ToggleItem = { type: 'toggle'; label: string; value: boolean; onToggle: (v: boolean) => void; disabled?: boolean };
+  type MenuItem = PressItem | ToggleItem;
+
+  const menuItems: MenuItem[] = [
+    ...(profile?.isAdmin ? [{ type: 'press' as const, label: '관리자 메뉴', onPress: () => router.push('/admin' as never), admin: true }] : []),
+    { type: 'press', label: '과팅 내역', onPress: () => router.push('/history') },
+    { type: 'toggle', label: '푸시 알림', value: pushEnabled, onToggle: handlePushToggle, disabled: pushLoading },
+    { type: 'press', label: '알림 내역', onPress: () => router.push('/notifications') },
+    { type: 'press', label: '이용약관', onPress: () => {} },
+    { type: 'press', label: '개인정보처리방침', onPress: () => {} },
+    { type: 'press', label: '로그아웃', onPress: handleLogout, danger: true },
+  ];
 
   return (
     <View style={styles.container}>
@@ -107,21 +134,55 @@ export default function MyScreen() {
         {/* Menu */}
         <View style={styles.menuSection}>
           {menuItems.map((item, idx) => (
-            <TouchableOpacity
-              key={idx}
-              style={styles.menuItem}
-              onPress={item.onPress}
-            >
-              <Text style={[styles.menuLabel, item.danger && styles.menuLabelDanger, item.admin && styles.menuLabelAdmin]}>
-                {item.label}
-              </Text>
-              <Feather name="chevron-right" size={16} color="#d1d5db" />
-            </TouchableOpacity>
+            item.type === 'toggle' ? (
+              <View key={idx} style={styles.menuItem}>
+                <Text style={styles.menuLabel}>{item.label}</Text>
+                <Switch
+                  value={item.value}
+                  onValueChange={item.onToggle}
+                  disabled={item.disabled}
+                  trackColor={{ false: '#e5e7eb', true: '#000' }}
+                  thumbColor="#fff"
+                />
+              </View>
+            ) : (
+              <TouchableOpacity key={idx} style={styles.menuItem} onPress={item.onPress}>
+                <Text style={[
+                  styles.menuLabel,
+                  item.danger && styles.menuLabelDanger,
+                  item.admin && styles.menuLabelAdmin,
+                ]}>
+                  {item.label}
+                </Text>
+                <Feather name="chevron-right" size={16} color="#d1d5db" />
+              </TouchableOpacity>
+            )
           ))}
         </View>
 
         <View style={{ height: 32 }} />
       </ScrollView>
+
+      {/* 로그아웃 확인 모달 */}
+      <Modal visible={logoutModalVisible} transparent animationType="fade">
+        <View style={styles.modalOverlay}>
+          <View style={styles.logoutModal}>
+            <Text style={styles.logoutTitle}>로그아웃</Text>
+            <Text style={styles.logoutDesc}>로그아웃 하시겠어요?</Text>
+            <View style={styles.logoutButtons}>
+              <TouchableOpacity
+                style={styles.logoutCancelBtn}
+                onPress={() => setLogoutModalVisible(false)}
+              >
+                <Text style={styles.logoutCancelText}>취소</Text>
+              </TouchableOpacity>
+              <TouchableOpacity style={styles.logoutConfirmBtn} onPress={confirmLogout}>
+                <Text style={styles.logoutConfirmText}>로그아웃</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
     </View>
   );
 }
@@ -205,4 +266,25 @@ const styles = StyleSheet.create({
   menuLabel: { fontSize: 15, color: '#0a0a0a' },
   menuLabelDanger: { color: '#e24b4a' },
   menuLabelAdmin: { color: '#2563eb', fontWeight: '600' },
+  modalOverlay: {
+    flex: 1, backgroundColor: 'rgba(0,0,0,0.4)',
+    alignItems: 'center', justifyContent: 'center',
+  },
+  logoutModal: {
+    backgroundColor: '#fff', borderRadius: 20,
+    padding: 24, width: 280, alignItems: 'center',
+  },
+  logoutTitle: { fontSize: 17, fontWeight: '700', color: '#0a0a0a', marginBottom: 8 },
+  logoutDesc: { fontSize: 14, color: '#6a7282', marginBottom: 24 },
+  logoutButtons: { flexDirection: 'row', gap: 10, width: '100%' },
+  logoutCancelBtn: {
+    flex: 1, backgroundColor: '#f3f4f6', borderRadius: 12,
+    paddingVertical: 12, alignItems: 'center',
+  },
+  logoutCancelText: { fontSize: 15, fontWeight: '600', color: '#6a7282' },
+  logoutConfirmBtn: {
+    flex: 1, backgroundColor: '#000', borderRadius: 12,
+    paddingVertical: 12, alignItems: 'center',
+  },
+  logoutConfirmText: { fontSize: 15, fontWeight: '600', color: '#fff' },
 });

@@ -7,7 +7,7 @@ import { router } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Feather } from '@expo/vector-icons';
 import { useProfile, useStats, useRestaurants, useChats, useTeam, useNotifications } from '../../hooks/useData';
-import { leaveTeam } from '../../services/api';
+import { leaveTeam, kickTeamMember } from '../../services/api';
 import { supabase } from '../../lib/supabase';
 import type { Team } from '../../services/api';
 
@@ -52,9 +52,10 @@ function NoTeamCard({ name, university, department, onCreateTeam, onJoinTeam }: 
   );
 }
 
-function HasTeamCard({ team, isLeader, onInviteTeam, onToggleApply, onDeleteTeam, onLeaveTeam }: {
+function HasTeamCard({ team, isLeader, onInviteTeam, onToggleApply, onDeleteTeam, onLeaveTeam, onKickMember }: {
   team: Team; isLeader: boolean; onInviteTeam: () => void;
   onToggleApply: () => void; onDeleteTeam: () => void; onLeaveTeam: () => void;
+  onKickMember?: (memberId: string, memberName: string) => void;
 }) {
   const isFull = team.members.length >= team.maxMembers;
   const isMatched = team.status === 'matched';
@@ -86,6 +87,11 @@ function HasTeamCard({ team, isLeader, onInviteTeam, onToggleApply, onDeleteTeam
             <View style={styles.memberDot} />
             <Text style={styles.memberName}>{member.name}</Text>
             {member.role === '팀장' && <Text style={styles.memberRole}>팀장</Text>}
+            {isLeader && member.role !== '팀장' && !isMatched && onKickMember && (
+              <TouchableOpacity onPress={() => onKickMember(member.id, member.name)} hitSlop={{ top: 6, bottom: 6, left: 6, right: 6 }}>
+                <Feather name="x" size={12} color="rgba(255,255,255,0.45)" />
+              </TouchableOpacity>
+            )}
           </View>
         ))}
         {isLeader && !isFull && !isMatched && (
@@ -192,6 +198,24 @@ export default function HomeScreen() {
     ]);
   };
 
+  const handleKickMember = (memberId: string, memberName: string) => {
+    if (!team) return;
+    Alert.alert('팀원 강퇴', `${memberName}님을 강퇴하시겠어요?`, [
+      { text: '취소', style: 'cancel' },
+      {
+        text: '강퇴', style: 'destructive',
+        onPress: async () => {
+          try {
+            await kickTeamMember(team.id, memberId);
+            await reloadTeam();
+          } catch {
+            Alert.alert('오류', '강퇴에 실패했어요. 다시 시도해주세요.');
+          }
+        },
+      },
+    ]);
+  };
+
   const statsData = [
     { value: stats?.maleWaiting ?? 0, label: '남자 신청' },
     { value: stats?.femaleWaiting ?? 0, label: '여자 신청' },
@@ -242,6 +266,7 @@ export default function HomeScreen() {
             }}
             onDeleteTeam={handleDeleteTeam}
             onLeaveTeam={handleLeaveTeam}
+            onKickMember={handleKickMember}
           />
         ) : (
           <NoTeamCard
